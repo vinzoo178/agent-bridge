@@ -2,11 +2,11 @@
 // URL: https://gemini.google.com/*
 
 class GeminiAdapter extends BasePlatformAdapter {
-  
+
   // Log to centralized logger
   _log(...args) {
     const message = args.join(' ');
-    console.log('[GeminiAdapter]', ...args);
+    // console.log('[GeminiAdapter]', ...args);
     if (window.logAIBridge) {
       window.logAIBridge('GeminiAdapter', 'INFO', message);
     }
@@ -15,7 +15,7 @@ class GeminiAdapter extends BasePlatformAdapter {
     super();
     this.name = 'gemini';
     this.hostPatterns = ['gemini.google.com'];
-    
+
     // Selectors - update these if Gemini UI changes
     this.selectors = {
       input: [
@@ -67,13 +67,13 @@ class GeminiAdapter extends BasePlatformAdapter {
       ]
     };
   }
-  
+
   getInputField() {
     const input = this.findFirst(this.selectors.input);
     this._log('getInputField:', input ? 'FOUND' : 'NOT FOUND');
     return input;
   }
-  
+
   getSendButton() {
     // Try standard selectors first
     for (const selector of this.selectors.sendButton) {
@@ -83,7 +83,7 @@ class GeminiAdapter extends BasePlatformAdapter {
         return btn;
       }
     }
-    
+
     // Fallback: find button containing send icon
     const allButtons = document.querySelectorAll('button');
     for (const btn of allButtons) {
@@ -93,14 +93,14 @@ class GeminiAdapter extends BasePlatformAdapter {
         return btn;
       }
     }
-    
+
     this._log('getSendButton: NOT FOUND');
     return null;
   }
-  
+
   getResponses() {
     this._log('getResponses called');
-    
+
     // Try each selector
     for (const selector of this.selectors.responses) {
       const elements = document.querySelectorAll(selector);
@@ -109,43 +109,43 @@ class GeminiAdapter extends BasePlatformAdapter {
         return Array.from(elements);
       }
     }
-    
+
     // Fallback: find message-content inside model-response
     const modelResponses = document.querySelectorAll('model-response');
     this._log('Found', modelResponses.length, 'model-response elements');
-    
+
     if (modelResponses.length > 0) {
       const responses = [];
       modelResponses.forEach(mr => {
         // Try to find the content inside
-        const content = mr.querySelector('message-content') || 
-                       mr.querySelector('.response-content') ||
-                       mr.querySelector('.markdown-content') ||
-                       mr;
+        const content = mr.querySelector('message-content') ||
+          mr.querySelector('.response-content') ||
+          mr.querySelector('.markdown-content') ||
+          mr;
         responses.push(content);
       });
       this._log('Extracted', responses.length, 'content elements');
       return responses;
     }
-    
+
     this._log('NO responses found!');
     return [];
   }
-  
+
   getLatestResponse() {
     const responses = this.getResponses();
     if (responses.length === 0) {
       this._log('getLatestResponse: No responses');
       return null;
     }
-    
+
     const last = responses[responses.length - 1];
     const text = (last.innerText || last.textContent || '').trim();
     this._log('getLatestResponse: Got', text.length, 'chars');
     this._log('Preview:', text.substring(0, 80) + '...');
     return text;
   }
-  
+
   isGenerating() {
     // Check loading indicators
     for (const selector of this.selectors.loading) {
@@ -155,7 +155,7 @@ class GeminiAdapter extends BasePlatformAdapter {
         return true;
       }
     }
-    
+
     // Check stop button visibility
     for (const selector of this.selectors.stopButton) {
       const stopBtn = document.querySelector(selector);
@@ -164,7 +164,7 @@ class GeminiAdapter extends BasePlatformAdapter {
         return true;
       }
     }
-    
+
     // Check if model-response is still being streamed
     const activeResponse = document.querySelector('model-response:last-child');
     if (activeResponse) {
@@ -174,30 +174,30 @@ class GeminiAdapter extends BasePlatformAdapter {
         return true;
       }
     }
-    
+
     this._log('isGenerating: FALSE');
     return false;
   }
-  
+
   async setInputText(text) {
     const input = this.getInputField();
     if (!input) {
       this._log('setInputText: Input not found!');
       return false;
     }
-    
+
     input.focus();
     await this.sleep(100);
-    
+
     // Gemini uses contenteditable with paragraphs
     input.innerHTML = '';
     const p = document.createElement('p');
     p.textContent = text;
     input.appendChild(p);
-    
+
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    
+
     this._log('setInputText: SUCCESS');
     return true;
   }
