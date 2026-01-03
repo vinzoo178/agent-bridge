@@ -14,6 +14,25 @@
   let isConnecting = false;
   let extensionId = null;
 
+  function log(level, ...args) {
+    const message = args.map(arg => 
+      typeof arg === "object" ? JSON.stringify(arg) : String(arg)
+    ).join(" ");
+    if (typeof chrome !== "undefined" && chrome.runtime) {
+      chrome.runtime.sendMessage({
+          type: "ADD_LOG",
+          entry: {
+              timestamp: new Date().toISOString(),
+              level: level,
+              source: "BackendClient",
+              message: message
+          }
+      }).catch(() => {});
+    }
+  }
+  function bLog(...args) { log("INFO", ...args); }
+  function bWarn(...args) { log("WARN", ...args); }
+  function bError(...args) { log("ERROR", ...args); }
   // ============================================
   // WEBSOCKET CONNECTION
   // ============================================
@@ -24,7 +43,7 @@
     }
 
     isConnecting = true;
-    console.log('[Backend Client] Connecting to backend...');
+    bLog('[Backend Client] Connecting to backend...');
 
     // Notify background that we're connecting
     if (typeof chrome !== 'undefined' && chrome.runtime) {
@@ -38,7 +57,7 @@
       ws = new WebSocket(BACKEND_URL);
 
       ws.onopen = () => {
-        console.log('[Backend Client] ✅ Connected to backend');
+        bLog('[Backend Client] ✅ Connected to backend');
         isConnecting = false;
         reconnectDelay = INITIAL_RECONNECT_DELAY;
         // Notify background if in extension context
@@ -55,13 +74,13 @@
           const message = JSON.parse(event.data);
           handleBackendMessage(message);
         } catch (error) {
-          console.error('[Backend Client] Error parsing message:', error);
+          bError('[Backend Client] Error parsing message:', error);
         }
       };
 
       ws.onerror = (error) => {
         // WebSocket error event doesn't have much detail
-        // Use console.warn instead of error to avoid cluttering Extension Errors page
+        // Use bWarn instead of error to avoid cluttering Extension Errors page
         // during normal reconnection attempts
         const errorDetails = {
           message: 'WebSocket connection error (Server likely offline)',
@@ -69,7 +88,7 @@
           readyState: ws?.readyState
         };
 
-        console.warn('[Backend Client] WebSocket connection issue:', errorDetails.message);
+        bWarn('[Backend Client] WebSocket connection issue:', errorDetails.message);
 
         isConnecting = false;
 
@@ -85,12 +104,12 @@
       };
 
       ws.onclose = (event) => {
-        console.log('[Backend Client] Disconnected from backend, code:', event.code, 'reason:', event.reason);
+        bLog('[Backend Client] Disconnected from backend, code:', event.code, 'reason:', event.reason);
         isConnecting = false;
         sendToBackground({ type: 'BACKEND_DISCONNECTED' });
 
         // Attempt reconnect with backoff
-        console.log(`[Backend Client] Reconnecting in ${reconnectDelay}ms...`);
+        bLog(`[Backend Client] Reconnecting in ${reconnectDelay}ms...`);
         reconnectTimeout = setTimeout(connect, reconnectDelay);
 
         // Increase delay for next time (cap at MAX_RECONNECT_DELAY)
@@ -108,7 +127,7 @@
       };
 
     } catch (error) {
-      console.error('[Backend Client] Connection error:', error);
+      bError('[Backend Client] Connection error:', error);
       isConnecting = false;
     }
   }
@@ -118,12 +137,12 @@
   // ============================================
 
   function handleBackendMessage(message) {
-    console.log('[Backend Client] Received from backend:', message.type);
+    bLog('[Backend Client] Received from backend:', message.type);
 
     switch (message.type) {
       case 'CONNECTION_ESTABLISHED':
         extensionId = message.extensionId;
-        console.log('[Backend Client] Extension ID:', extensionId);
+        bLog('[Backend Client] Extension ID:', extensionId);
         sendToBackground({
           type: 'BACKEND_CONNECTED',
           extensionId: extensionId
@@ -140,20 +159,20 @@
         break;
 
       default:
-        console.warn('[Backend Client] Unknown message type:', message.type);
+        bWarn('[Backend Client] Unknown message type:', message.type);
     }
   }
 
   async function handleClientMessage(message) {
     const { requestId, conversationId, message: text } = message;
 
-    console.log('[Backend Client] Processing client message:', requestId);
-    console.log('[Backend Client] Message type:', typeof text, 'value:', text);
+    bLog('[Backend Client] Processing client message:', requestId);
+    bLog('[Backend Client] Message type:', typeof text, 'value:', text);
 
     // Ensure message is a string
     let messageText = text;
     if (typeof text !== 'string') {
-      console.warn('[Backend Client] Message is not a string, converting...', typeof text, text);
+      bWarn('[Backend Client] Message is not a string, converting...', typeof text, text);
       if (Array.isArray(text)) {
         messageText = text.map(item => {
           if (typeof item === 'string') return item;
@@ -172,13 +191,13 @@
       return;
     }
 
-    console.log('[Backend Client] Final message text:', messageText.substring(0, 100));
+    bLog('[Backend Client] Final message text:', messageText.substring(0, 100));
 
     try {
       // Get available session directly from background
       const sessionResponse = await chrome.runtime.sendMessage({ type: 'GET_AVAILABLE_SESSION' });
 
-      console.log('[Backend Client] Available session response:', JSON.stringify(sessionResponse));
+      bLog('[Backend Client] Available session response:', JSON.stringify(sessionResponse));
 
       if (!sessionResponse) {
         sendErrorToBackend(requestId, 'Failed to get session information');
@@ -186,20 +205,20 @@
       }
 
       if (!sessionResponse.available || !sessionResponse.sessionNum) {
-        console.warn('[Backend Client] No session available, trying auto-register...');
+        bWarn('[Backend Client] No session available, trying auto-register...');
 
         // Try to trigger auto-registration
         try {
           await chrome.runtime.sendMessage({ type: 'AUTO_REGISTER_TABS' });
-          console.log('[Backend Client] Auto-register triggered, waiting 2s...');
+          bLog('[Backend Client] Auto-register triggered, waiting 2s...');
           await new Promise(resolve => setTimeout(resolve, 2000));
 
           // Try again
           const retryResponse = await chrome.runtime.sendMessage({ type: 'GET_AVAILABLE_SESSION' });
-          console.log('[Backend Client] Retry response:', JSON.stringify(retryResponse));
+          bLog('[Backend Client] Retry response:', JSON.stringify(retryResponse));
 
           if (retryResponse && retryResponse.available && retryResponse.sessionNum) {
-            console.log('[Backend Client] Session found after auto-register!');
+            bLog('[Backend Client] Session found after auto-register!');
             // Continue with retryResponse
             const sessionNum = retryResponse.sessionNum;
 
@@ -216,15 +235,15 @@
               return;
             }
 
-            console.log('[Backend Client] Message sent to session', sessionNum, ', waiting for response...');
+            bLog('[Backend Client] Message sent to session', sessionNum, ', waiting for response...');
             return; // Success!
           }
         } catch (autoRegError) {
-          console.error('[Backend Client] Auto-register failed:', autoRegError);
+          bError('[Backend Client] Auto-register failed:', autoRegError);
         }
 
         // If still no session, return error
-        console.error('[Backend Client] No session available after retry. Response:', JSON.stringify(sessionResponse));
+        bError('[Backend Client] No session available after retry. Response:', JSON.stringify(sessionResponse));
         const errorMsg = 'No registered session available. Please register as Agent A or B first. ' +
           `Session 1: ${sessionResponse.session1?.hasTabId ? 'registered' : 'not registered'}, ` +
           `Session 2: ${sessionResponse.session2?.hasTabId ? 'registered' : 'not registered'}`;
@@ -233,7 +252,7 @@
       }
 
       const sessionNum = sessionResponse.sessionNum;
-      console.log('[Backend Client] Using session:', sessionNum, 'tabId:', sessionResponse.tabId, 'platform:', sessionResponse.platform);
+      bLog('[Backend Client] Using session:', sessionNum, 'tabId:', sessionResponse.tabId, 'platform:', sessionResponse.platform);
 
       // Send message via background script (which will forward to content script)
       const sendResult = await chrome.runtime.sendMessage({
@@ -249,13 +268,13 @@
         return;
       }
 
-      console.log('[Backend Client] Message sent to session', sessionNum, ', waiting for response...');
+      bLog('[Backend Client] Message sent to session', sessionNum, ', waiting for response...');
 
       // Response will be sent via content script -> background -> backend client
       // We'll handle it in the message listener below
 
     } catch (error) {
-      console.error('[Backend Client] Error handling client message:', error);
+      bError('[Backend Client] Error handling client message:', error);
       sendErrorToBackend(requestId, error.message);
     }
   }
@@ -266,7 +285,7 @@
 
   function sendToBackend(message) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.error('[Backend Client] Cannot send - not connected');
+      bError('[Backend Client] Cannot send - not connected');
       return false;
     }
 
@@ -274,7 +293,7 @@
       ws.send(JSON.stringify(message));
       return true;
     } catch (error) {
-      console.error('[Backend Client] Error sending to backend:', error);
+      bError('[Backend Client] Error sending to backend:', error);
       return false;
     }
   }
@@ -352,7 +371,7 @@
     })
   };
 
-  console.log('[Backend Client] Initialized');
+  bLog('[Backend Client] Initialized');
 
 })();
 

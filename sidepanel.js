@@ -1,17 +1,17 @@
 // AI Chat Bridge - Side Panel Script
 function log(level, ...args) {
-  const message = args.map(arg => 
+  const message = args.map(arg =>
     typeof arg === "object" ? JSON.stringify(arg) : String(arg)
   ).join(" ");
   chrome.runtime.sendMessage({
-      type: "ADD_LOG",
-      entry: {
-          timestamp: new Date().toISOString(),
-          level: level,
-          source: "SidePanel",
-          message: message
-      }
-  }).catch(() => {});
+    type: "ADD_LOG",
+    entry: {
+      timestamp: new Date().toISOString(),
+      level: level,
+      source: "SidePanel",
+      message: message
+    }
+  }).catch(() => { });
 }
 function spLog(...args) { log("INFO", ...args); }
 function spWarn(...args) { log("WARN", ...args); }
@@ -566,23 +566,24 @@ function renderParticipants(participants) {
     const platformName = platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : 'Not connected';
 
     card.innerHTML = `
-      <div class="participant-header">
-        <div class="participant-order">
-          <span class="order-number">${position}</span>
+      <div class="participant-card-row">
+        <div class="participant-info">
+          <div class="participant-order">
+            <span class="order-number">${position}</span>
+          </div>
+          ${connected && platform ? icon : ''}
+          <span class="${connected ? 'platform-name-text' : 'empty-slot-text'}">
+            ${connected && platform ? platformName : 'Waiting for agent...'}
+          </span>
         </div>
-        <span class="participant-label">${connected && platform ? platformName : `Position ${position}`}</span>
-        <span class="session-status ${connected ? 'connected' : 'disconnected'}">${connected ? 'Connected' : 'Disconnected'}</span>
-      </div>
-      <div class="participant-content">
-        <div class="session-platform">
-          ${connected && platform ? icon : '<svg class="platform-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6"></path></svg>'}
-          <span>${connected && platform ? platformName : 'Not connected'}</span>
-        </div>
-        <div class="participant-actions">
-          <select class="agent-selector" data-position="${position}" ${connected ? 'disabled' : ''}>
-            <option value="">Select agent...</option>
-          </select>
-          <button class="btn-release" data-position="${position}" style="display:${connected ? 'flex' : 'none'};" title="Remove from conversation">
+        
+        <div class="participant-controls">
+          <span class="session-status ${connected ? 'connected' : 'disconnected'}">
+            ${connected ? 'Connected' : 'Empty'}
+          </span>
+          <button class="btn-release compact" data-position="${position}" 
+                  style="display:${connected ? 'flex' : 'none'};" 
+                  title="Remove from conversation">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
             </svg>

@@ -502,6 +502,10 @@ async function handleMessage(message, sender) {
       return { success: true, agents: allAgents };
 
     case 'ASSIGN_AGENT_TO_SLOT':
+      if (!message || !message.tabId) {
+        bgError('ASSIGN_AGENT_TO_SLOT: Missing tabId in message');
+        return { success: false, error: 'Missing tabId' };
+      }
       return assignAgentToSlot(message.tabId, message.position || message.sessionNum);
 
     case 'REMOVE_PARTICIPANT':
@@ -511,6 +515,10 @@ async function handleMessage(message, sender) {
       return addEmptyParticipant(message.position);
 
     case 'REMOVE_AGENT_FROM_POOL':
+      if (!message || !message.tabId) {
+        bgError('REMOVE_AGENT_FROM_POOL: Missing tabId in message');
+        return { success: false, error: 'Missing tabId' };
+      }
       return removeAgentFromPool(message.tabId);
 
     case 'UNREGISTER_SESSION':
@@ -1338,7 +1346,7 @@ function getState() {
 function getStateWithTabIds() {
   return {
     isActive: state.isActive,
-    participants: state.participants.map(p => ({
+    participants: state.participants.filter(p => p != null).map(p => ({
       connected: !!p.tabId,
       tabId: p.tabId,
       platform: p.platform,
@@ -1350,13 +1358,13 @@ function getStateWithTabIds() {
     config: state.config,
     messageCount: state.conversationHistory.length,
     // Legacy compatibility
-    session1: state.participants.length > 0 ? {
+    session1: state.participants.length > 0 && state.participants[0] ? {
       connected: !!state.participants[0].tabId,
       tabId: state.participants[0].tabId,
       platform: state.participants[0].platform,
       role: state.participants[0].role
     } : { connected: false, tabId: null, platform: null, role: null },
-    session2: state.participants.length > 1 ? {
+    session2: state.participants.length > 1 && state.participants[1] ? {
       connected: !!state.participants[1].tabId,
       tabId: state.participants[1].tabId,
       platform: state.participants[1].platform,

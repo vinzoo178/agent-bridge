@@ -1512,6 +1512,13 @@ body {
   gap: 6px;
 }
 
+.turn-indicator svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 .turn-indicator.active {
   color: var(--success);
   background: var(--success);
@@ -1738,4 +1745,84 @@ body {
 /* Collapsed debug panel */
 .debug-panel.collapsed .panel-content {
   display: none;
+}
+
+/* CSS for simplified participant card (Single Line) */
+
+.participant-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.participant-info {
+  display: flex;
+  align-items: center;
+  gap: 10px; /* More gap for better separation */
+  flex: 1;
+  min-width: 0; /* For truncation */
+  overflow: hidden; /* Ensure truncation works */
+}
+
+.participant-info .platform-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: inline-block;
+  color: var(--accent-primary);
+}
+
+.participant-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Adjust .participant-card padding for simpler layout */
+.participant-card {
+  padding: 10px 14px;
+}
+
+/* Override btn-release to seem more compact and fit in the row */
+.btn-release.compact {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.btn-release.compact:hover {
+  background: var(--bg-tertiary);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.platform-name-text {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.participant-card.connected .platform-name-text {
+  color: var(--accent-primary);
+}
+
+.empty-slot-text {
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 13px;
 }

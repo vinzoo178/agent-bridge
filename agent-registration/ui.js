@@ -7,24 +7,47 @@
 
     const state = window.AIBridge.state;
 
+    // Safe logging wrapper
+    function safeLog(level, message) {
+        try {
+            const logFn = window.AIBridge && window.AIBridge.sendLog;
+            if (logFn && typeof logFn === 'function') {
+                try {
+                    logFn(level, message);
+                    return;
+                } catch (e) {
+                    // Fallback to console if sendLog fails
+                }
+            }
+        } catch (e) {
+            // Ignore errors accessing window.AIBridge
+        }
+        
+        // Fallback to console if sendLog is not available or fails
+        try {
+            const consoleMethod = console[level.toLowerCase()] || console.log;
+            consoleMethod('[AI Bridge Registration]', message);
+        } catch (e) {
+            // Last resort - do nothing if even console fails
+        }
+    }
+
     // ============================================
     // UI UPDATE FUNCTIONS
     // ============================================
 
     function updateRegisteredUI(num, role = null) {
-        sendLog.bind(null, 'INFO')('[AI Bridge Registration] updateRegisteredUI called for session:', num, 'role:', role);
+        safeLog('INFO', '[AI Bridge Registration] updateRegisteredUI called for session: ' + num + ', role: ' + role);
 
         const overlay = document.getElementById('ai-bridge-overlay');
         if (!overlay) {
-            sendLog.bind(null, 'ERROR')('[AI Bridge Registration] Overlay not found!');
+            safeLog('ERROR', '[AI Bridge Registration] Overlay not found!');
             return;
         }
 
         const statusDot = overlay.querySelector('.status-dot');
         const statusText = document.getElementById('overlay-status-text');
-        const registeredView = document.getElementById('registered-view');
-        const notRegisteredView = document.getElementById('not-registered-view');
-        const actionStatus = document.getElementById('action-status');
+        const disconnectBtn = document.getElementById('unregister-btn');
 
         if (statusDot) {
             statusDot.classList.remove('disconnected');
@@ -38,45 +61,20 @@
             }
         }
 
-        if (registeredView) registeredView.style.display = 'block';
-        if (notRegisteredView) notRegisteredView.style.display = 'none';
-
-        if (actionStatus) {
-            actionStatus.textContent = 'Ready';
-            actionStatus.style.color = '#94a3b8';
+        if (disconnectBtn) {
+            disconnectBtn.style.display = 'flex';
         }
 
+        overlay.style.display = 'block';
         overlay.classList.add('compact');
-        sendLog.bind(null, 'INFO')('[AI Bridge Registration] updateRegisteredUI completed');
+        safeLog('INFO', '[AI Bridge Registration] updateRegisteredUI completed');
     }
 
     function updatePoolRegisteredUI() {
         const overlay = document.getElementById('ai-bridge-overlay');
         if (!overlay) return;
 
-        const statusDot = overlay.querySelector('.status-dot');
-        const statusText = document.getElementById('overlay-status-text');
-        const registeredView = document.getElementById('registered-view');
-        const notRegisteredView = document.getElementById('not-registered-view');
-        const registrationStatusText = document.getElementById('registration-status-text');
-
-        if (statusDot) {
-            statusDot.className = 'status-dot disconnected';
-            statusDot.style.background = '#f59e0b'; // Amber
-        }
-        if (statusText) {
-            statusText.textContent = 'Waiting...';
-        }
-
-        if (registeredView) registeredView.style.display = 'none';
-        if (notRegisteredView) notRegisteredView.style.display = 'block';
-
-        if (registrationStatusText) {
-            registrationStatusText.textContent = 'Auto-registering...';
-            const subText = registrationStatusText.nextElementSibling;
-            if (subText) subText.textContent = 'Assign from sidepanel';
-        }
-
+        overlay.style.display = 'none';
         overlay.classList.remove('compact');
     }
 
@@ -84,53 +82,68 @@
         const overlay = document.getElementById('ai-bridge-overlay');
         if (!overlay) return;
 
+        const disconnectBtn = document.getElementById('unregister-btn');
+        if (disconnectBtn) {
+            disconnectBtn.style.display = 'none';
+        }
+
+        overlay.style.display = 'none';
+        overlay.classList.remove('compact');
+    }
+
+    function updateReloadRequiredUI() {
+        const overlay = document.getElementById('ai-bridge-overlay');
+        if (!overlay) return;
+
         const statusDot = overlay.querySelector('.status-dot');
         const statusText = document.getElementById('overlay-status-text');
-        const registeredView = document.getElementById('registered-view');
-        const notRegisteredView = document.getElementById('not-registered-view');
-        const registrationStatusText = document.getElementById('registration-status-text');
-        const selector = document.getElementById('session-selector');
+        const disconnectBtn = document.getElementById('unregister-btn');
+        const reloadView = document.getElementById('reload-view');
+        const reloadMessage = document.getElementById('reload-message');
 
         if (statusDot) {
-            statusDot.className = 'status-dot disconnected';
+            statusDot.classList.remove('connected');
+            statusDot.classList.add('disconnected');
             statusDot.style.background = '';
         }
         if (statusText) {
-            statusText.textContent = 'Waiting...';
+            statusText.textContent = '❌ Reload Required';
         }
 
-        if (registeredView) registeredView.style.display = 'none';
-        if (notRegisteredView) notRegisteredView.style.display = 'block';
-
-        if (registrationStatusText) {
-            registrationStatusText.textContent = 'Auto-registering...';
+        if (disconnectBtn) {
+            disconnectBtn.style.display = 'none';
         }
+        if (reloadView) reloadView.style.display = 'block';
 
+        overlay.style.display = 'block';
         overlay.classList.remove('compact');
-        if (selector) selector.style.display = 'none';
+
+        // Auto-reload after 5 seconds with countdown
+        if (reloadMessage) {
+            let countdown = 5;
+            reloadMessage.textContent = `Extension updated. Auto-reloading in ${countdown}s...`;
+            
+            const countdownInterval = setInterval(() => {
+                countdown--;
+                if (countdown > 0) {
+                    reloadMessage.textContent = `Extension updated. Auto-reloading in ${countdown}s...`;
+                } else {
+                    clearInterval(countdownInterval);
+                    reloadMessage.textContent = 'Reloading...';
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 500);
+                }
+            }, 1000);
+
+            // Store interval ID so we can clear it if user clicks button
+            overlay._reloadCountdown = countdownInterval;
+        }
     }
 
     function updateActionStatusFromState(conversationState) {
-        const actionStatus = document.getElementById('action-status');
-        if (!actionStatus || !state.isRegistered) return;
-        if (!conversationState) return;
-
-        const mySessionNum = state.sessionNum;
-        const isActive = conversationState.isActive;
-        const currentTurn = conversationState.currentTurn;
-
-        if (isActive) {
-            if (currentTurn === mySessionNum) {
-                actionStatus.textContent = '🎯 Your turn';
-                actionStatus.style.color = '#818cf8';
-            } else {
-                actionStatus.textContent = '⏳ Waiting';
-                actionStatus.style.color = '#94a3b8';
-            }
-        } else {
-            actionStatus.textContent = 'Ready';
-            actionStatus.style.color = '#94a3b8';
-        }
+        // Action status removed - interface streamlined
+        // Status is only shown in the status bar now
     }
 
     // ============================================
@@ -138,27 +151,83 @@
     // ============================================
 
     function makeDraggable(element) {
-        const header = element.querySelector('.ai-bridge-header');
+        const statusBar = element.querySelector('.ai-bridge-status');
         let isDragging = false;
-        let offsetX, offsetY;
+        let startX, startY, initialLeft, initialTop;
 
-        header.onmousedown = function (e) {
-            if (e.target.tagName === 'BUTTON') return;
+        if (!statusBar) return;
+
+        statusBar.style.cursor = 'move';
+        statusBar.onmousedown = function (e) {
+            if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+            
             isDragging = true;
-            offsetX = e.clientX - element.offsetLeft;
-            offsetY = e.clientY - element.offsetTop;
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            // Get current position
+            const rect = element.getBoundingClientRect();
+            initialLeft = rect.left;
+            initialTop = rect.top;
+            
+            // Disable transitions during drag for smooth movement
+            element.style.transition = 'none';
+            element.style.cursor = 'grabbing';
+            element.style.userSelect = 'none';
+            
+            e.preventDefault();
         };
 
-        document.onmousemove = function (e) {
+        function handleMouseMove(e) {
             if (!isDragging) return;
-            element.style.left = (e.clientX - offsetX) + 'px';
-            element.style.top = (e.clientY - offsetY) + 'px';
-            element.style.right = 'auto';
-        };
+            
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            
+            // Use transform for GPU-accelerated smooth movement
+            element.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+        }
 
-        document.onmouseup = function () {
+        function handleMouseUp() {
+            if (!isDragging) return;
+            
             isDragging = false;
-        };
+            element.style.userSelect = '';
+            
+            // Get final position from transform
+            const transform = element.style.transform;
+            const matches = transform.match(/translate\(([^,]+)px,\s*([^)]+)px\)/);
+            
+            if (matches) {
+                const deltaX = parseFloat(matches[1]);
+                const deltaY = parseFloat(matches[2]);
+                
+                // Convert transform to left/top for final position
+                const finalLeft = initialLeft + deltaX;
+                const finalTop = initialTop + deltaY;
+                
+                // Reset transform and set final position
+                element.style.transform = '';
+                element.style.transition = '';
+                element.style.left = finalLeft + 'px';
+                element.style.top = finalTop + 'px';
+            }
+            
+            element.style.cursor = 'move';
+        }
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+        
+        // Clean up on element removal
+        const observer = new MutationObserver(() => {
+            if (!document.body.contains(element)) {
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+                observer.disconnect();
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
     }
 
     function createOverlay() {
@@ -168,70 +237,49 @@
         const overlay = document.createElement('div');
         overlay.id = 'ai-bridge-overlay';
         overlay.innerHTML = `
-      <div class="ai-bridge-header">
-        <span class="ai-bridge-title">🤖 AI Bridge</span>
-        <button id="ai-bridge-toggle" class="ai-bridge-btn">−</button>
-      </div>
       <div class="ai-bridge-content">
         <!-- Status Display -->
         <div class="ai-bridge-status" id="overlay-status">
           <span class="status-dot disconnected"></span>
           <span class="status-text" id="overlay-status-text">Waiting...</span>
+          <button id="unregister-btn" class="ai-bridge-disconnect-icon" title="Disconnect" style="display:none;">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
         </div>
         
-        <!-- Registered View (default hidden) -->
-        <div class="ai-bridge-registered-view" id="registered-view" style="display:none;">
-          <div id="action-status" style="font-size:11px;color:#94a3b8;margin-bottom:10px;text-align:center;">Ready</div>
-          <div class="ai-bridge-quick-actions">
-            <button id="manual-capture" class="session-btn small" title="Manually capture AI response">📷</button>
-            <button id="unregister-btn" class="session-btn small danger" title="Disconnect">✕</button>
-          </div>
-        </div>
-        
-        <!-- Not Registered View (default hidden) -->
-        <div class="ai-bridge-not-registered-view" id="not-registered-view" style="display:none;">
-          <div style="font-size:10px;color:#94a3b8;margin-bottom:8px;text-align:center;">
-            <div id="registration-status-text">Auto-registering...</div>
-            <div style="font-size:9px;color:#64748b;margin-top:4px;">
-              Assign from sidepanel
-            </div>
-          </div>
+        <!-- Reload Required View (default hidden) -->
+        <div class="ai-bridge-reload-view" id="reload-view" style="display:none;">
+          <div id="reload-message" class="reload-message">Extension updated. Please refresh page.</div>
         </div>
       </div>
     `;
 
         document.body.appendChild(overlay);
 
-        // Toggle button
-        document.getElementById('ai-bridge-toggle').onclick = function () {
-            const content = overlay.querySelector('.ai-bridge-content');
-            const isVisible = content.style.display !== 'none';
-            content.style.display = isVisible ? 'none' : 'flex';
-            this.textContent = isVisible ? '+' : '−';
-        };
-
-        // Unregister button
-        document.getElementById('unregister-btn').onclick = () => {
-            if (window.AIBridge.unregister) {
-                window.AIBridge.unregister();
-            }
-        };
-
-        // Manual capture button
-        document.getElementById('manual-capture').onclick = function () {
-            window.dispatchEvent(new CustomEvent('aiBridgeManualCapture'));
-        };
+        // Unregister button (disconnect icon)
+        const unregisterBtn = document.getElementById('unregister-btn');
+        if (unregisterBtn) {
+            unregisterBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (window.AIBridge.unregister) {
+                    window.AIBridge.unregister();
+                }
+            };
+        }
 
         makeDraggable(overlay);
         updateUnregisteredUI(); // Initial state
 
-        window.AIBridge.sendLog('INFO', 'Overlay created and initialized');
+        safeLog('INFO', 'Overlay created and initialized');
     }
 
     // Expose UI functions
     window.AIBridge.ui.updateRegisteredUI = updateRegisteredUI;
     window.AIBridge.ui.updatePoolRegisteredUI = updatePoolRegisteredUI;
     window.AIBridge.ui.updateUnregisteredUI = updateUnregisteredUI;
+    window.AIBridge.ui.updateReloadRequiredUI = updateReloadRequiredUI;
     window.AIBridge.ui.updateActionStatusFromState = updateActionStatusFromState;
     window.AIBridge.ui.createOverlay = createOverlay;
 
