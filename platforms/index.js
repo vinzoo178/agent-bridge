@@ -89,6 +89,11 @@ if (typeof ZAIAdapter !== 'undefined') {
   PlatformRegistry.register(ZAIAdapter);
 }
 
+// Kimi
+if (typeof KimiAdapter !== 'undefined') {
+  PlatformRegistry.register(KimiAdapter);
+}
+
 // ============================================
 // HOW TO ADD NEW PLATFORMS:
 // 1. Create new adapter file in platforms/ folder

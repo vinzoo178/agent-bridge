@@ -2121,7 +2121,8 @@ const SUPPORTED_PLATFORMS = [
   'chat.deepseek.com',
   'duckduckgo.com',
   'chat.z.ai',
-  'z.ai'
+  'z.ai',
+  'kimi.com'
 ];
 
 // Check if URL is a supported chat platform
@@ -2145,6 +2146,7 @@ function detectPlatformFromUrl(url) {
     if (hostname.includes('deepseek')) return 'deepseek';
     if (hostname.includes('duckduckgo')) return 'duckduckgo';
     if (hostname.includes('z.ai') || hostname.includes('chat.z.ai')) return 'zai';
+    if (hostname.includes('kimi.com')) return 'kimi';
     return null;
   } catch {
     return null;
@@ -2187,6 +2189,11 @@ function getRootUrlForPlatform(url) {
     // Z.ai: https://chat.z.ai/
     if (hostname.includes('z.ai') || hostname.includes('chat.z.ai')) {
       return 'https://chat.z.ai/';
+    }
+    
+    // Kimi: https://www.kimi.com/
+    if (hostname.includes('kimi.com')) {
+      return 'https://www.kimi.com/';
     }
     
     return null;

@@ -19,7 +19,9 @@
     "https://duckduckgo.com/*",
     "https://duck.ai/*",
     "https://chat.z.ai/*",
-    "https://z.ai/*"
+    "https://z.ai/*",
+    "https://www.kimi.com/*",
+    "https://kimi.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -46,7 +48,9 @@
         "https://duckduckgo.com/*",
         "https://duck.ai/*",
         "https://chat.z.ai/*",
-        "https://z.ai/*"
+        "https://z.ai/*",
+        "https://www.kimi.com/*",
+        "https://kimi.com/*"
       ],
       "js": [
         "logger.js",
@@ -56,6 +60,7 @@
         "platforms/deepseek-adapter.js",
         "platforms/duckduckgo-adapter.js",
         "platforms/z-ai-adapter.js",
+        "platforms/kimi-adapter.js",
         "platforms/index.js",
         "agent-registration/state.js",
         "agent-registration/ui.js",
