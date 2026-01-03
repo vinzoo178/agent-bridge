@@ -7,6 +7,8 @@ const state = {
   session2: { tabId: null, role: 'Agent B', platform: null },
   currentTurn: 1, // Which session should respond next
   conversationHistory: [],
+  // Available agents pool - tabs that have registered but not assigned to slots
+  availableAgents: [], // Array of { tabId, platform, title, registeredAt }
   config: {
     autoReplyDelay: 2000, // Delay before auto-reply (ms)
     maxTurns: 50, // Maximum conversation turns
@@ -418,12 +420,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleMessage(message, sender) {
   switch (message.type) {
     case 'REGISTER_SESSION':
+      // Legacy: Direct assignment to session slot (for backward compatibility)
       console.log('[Background] REGISTER_SESSION request, sender.tab:', sender.tab);
       if (!sender.tab || !sender.tab.id) {
         console.error('[Background] ERROR: No tab ID in sender!');
         return { success: false, error: 'No tab ID' };
       }
       return registerSession(message.sessionNum, sender.tab.id, message.platform);
+    
+    case 'REGISTER_TO_POOL':
+      // New: Register tab to available agents pool
+      if (!sender.tab || !sender.tab.id) {
+        return { success: false, error: 'No tab ID' };
+      }
+      return registerToPool(sender.tab.id, message.platform);
+    
+    case 'GET_AVAILABLE_AGENTS':
+      return getAvailableAgents();
+    
+    case 'ASSIGN_AGENT_TO_SLOT':
+      return assignAgentToSlot(message.tabId, message.sessionNum);
+    
+    case 'REMOVE_AGENT_FROM_POOL':
+      return removeAgentFromPool(message.tabId);
     
     case 'UNREGISTER_SESSION':
       return unregisterSession(message.sessionNum);
@@ -602,6 +621,10 @@ async function registerSession(sessionNum, tabId, platform) {
   bgLog('====== REGISTER SESSION ======');
   bgLog('Session:', sessionNum, 'TabId:', tabId, 'Platform:', platform);
   
+  // Remove from pool if it's there (in case it was assigned from pool)
+  state.availableAgents = state.availableAgents.filter(a => a.tabId !== tabId);
+  await chrome.storage.local.set({ availableAgents: state.availableAgents });
+  
   const sessionKey = sessionNum === 1 ? 'session1' : 'session2';
   state[sessionKey].tabId = tabId;
   state[sessionKey].platform = platform;
@@ -624,6 +647,7 @@ async function registerSession(sessionNum, tabId, platform) {
   
   // Notify popup about state change
   broadcastStateUpdate();
+  broadcastAvailableAgentsUpdate();
   
   // Also notify the specific tab to update its UI
   // Retry a few times in case content script isn't ready yet
@@ -651,8 +675,133 @@ async function registerSession(sessionNum, tabId, platform) {
   return { success: true, session: state[sessionKey] };
 }
 
+// Register tab to available agents pool (new proactive registration)
+async function registerToPool(tabId, platform) {
+  bgLog('====== REGISTER TO POOL ======');
+  bgLog('TabId:', tabId, 'Platform:', platform);
+  
+  // Check if already in pool
+  const existingIndex = state.availableAgents.findIndex(agent => agent.tabId === tabId);
+  if (existingIndex >= 0) {
+    bgLog('Tab already in pool, updating...');
+    // Update existing entry
+    state.availableAgents[existingIndex].platform = platform;
+    state.availableAgents[existingIndex].registeredAt = new Date().toISOString();
+  } else {
+    // Get tab title
+    let title = 'Chat Tab';
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      title = tab.title || 'Chat Tab';
+    } catch (e) {
+      bgLog('Could not get tab title:', e.message);
+    }
+    
+    // Add to pool
+    state.availableAgents.push({
+      tabId: tabId,
+      platform: platform,
+      title: title,
+      registeredAt: new Date().toISOString()
+    });
+    bgLog('Added to pool. Total agents:', state.availableAgents.length);
+  }
+  
+  // Save to storage
+  await chrome.storage.local.set({ availableAgents: state.availableAgents });
+  
+  // Notify tab that it's registered to pool
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'REGISTERED_TO_POOL',
+      platform: platform
+    });
+  } catch (e) {
+    bgLog('Could not notify tab:', e.message);
+  }
+  
+  // Broadcast update
+  broadcastStateUpdate();
+  broadcastAvailableAgentsUpdate();
+  
+  return { success: true, agent: state.availableAgents.find(a => a.tabId === tabId) };
+}
+
+// Get list of available agents
+function getAvailableAgents() {
+  // Filter out agents that are already assigned to slots
+  const assignedTabIds = [state.session1.tabId, state.session2.tabId].filter(Boolean);
+  const available = state.availableAgents.filter(agent => !assignedTabIds.includes(agent.tabId));
+  
+  return {
+    success: true,
+    agents: available,
+    total: state.availableAgents.length
+  };
+}
+
+// Assign agent from pool to a session slot
+async function assignAgentToSlot(tabId, sessionNum) {
+  bgLog('====== ASSIGN AGENT TO SLOT ======');
+  bgLog('TabId:', tabId, 'Session:', sessionNum);
+  
+  // Find agent in pool
+  const agent = state.availableAgents.find(a => a.tabId === tabId);
+  if (!agent) {
+    return { success: false, error: 'Agent not found in pool' };
+  }
+  
+  // Remove from pool and assign to slot
+  state.availableAgents = state.availableAgents.filter(a => a.tabId !== tabId);
+  await chrome.storage.local.set({ availableAgents: state.availableAgents });
+  
+  // Assign to session slot
+  const result = await registerSession(sessionNum, tabId, agent.platform);
+  
+  // Broadcast updates
+  broadcastStateUpdate();
+  broadcastAvailableAgentsUpdate();
+  
+  return result;
+}
+
+// Remove agent from pool
+async function removeAgentFromPool(tabId) {
+  bgLog('====== REMOVE AGENT FROM POOL ======');
+  bgLog('TabId:', tabId);
+  
+  state.availableAgents = state.availableAgents.filter(a => a.tabId !== tabId);
+  await chrome.storage.local.set({ availableAgents: state.availableAgents });
+  
+  // Notify tab
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'REMOVED_FROM_POOL'
+    });
+  } catch (e) {
+    bgLog('Could not notify tab:', e.message);
+  }
+  
+  // Broadcast update
+  broadcastAvailableAgentsUpdate();
+  
+  return { success: true };
+}
+
+// Broadcast available agents update
+function broadcastAvailableAgentsUpdate() {
+  const available = getAvailableAgents();
+  chrome.runtime.sendMessage({
+    type: 'AVAILABLE_AGENTS_UPDATE',
+    agents: available.agents
+  }).catch(() => {});
+}
+
 async function unregisterSession(sessionNum) {
   const sessionKey = sessionNum === 1 ? 'session1' : 'session2';
+  const tabId = state[sessionKey].tabId;
+  const platform = state[sessionKey].platform;
+  
   state[sessionKey].tabId = null;
   state[sessionKey].platform = null;
   
@@ -662,12 +811,25 @@ async function unregisterSession(sessionNum) {
     `session${sessionNum}_platform`
   ]);
   
+  // If tab still exists, add it back to the pool
+  if (tabId && platform) {
+    try {
+      await chrome.tabs.get(tabId);
+      // Tab exists, add to pool
+      await registerToPool(tabId, platform);
+      bgLog('Unregistered session', sessionNum, '- added tab back to pool');
+    } catch (e) {
+      bgLog('Tab no longer exists, not adding to pool');
+    }
+  }
+  
   // Stop conversation if a session is unregistered
   if (state.isActive) {
     stopConversation();
   }
   
   broadcastStateUpdate();
+  broadcastAvailableAgentsUpdate();
   return { success: true };
 }
 
@@ -1183,6 +1345,18 @@ async function checkTabRegistration(tabId) {
     return result;
   }
   
+  // Check if in available agents pool
+  const agentInPool = state.availableAgents.find(a => a.tabId === checkTabId);
+  if (agentInPool) {
+    bgLog('MATCH: Tab is in available agents pool');
+    return {
+      isRegistered: true,
+      inPool: true,
+      platform: agentInPool.platform,
+      tabId: agentInPool.tabId
+    };
+  }
+  
   bgLog('NO MATCH: Tab is not registered');
   return { isRegistered: false };
 }
@@ -1279,12 +1453,20 @@ function broadcastConversationUpdate(entry, cleared = false) {
   }
 }
 
-// Handle tab close - unregister session
+// Handle tab close - unregister session and remove from pool
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (state.session1.tabId === tabId) {
     unregisterSession(1);
   } else if (state.session2.tabId === tabId) {
     unregisterSession(2);
+  }
+  
+  // Also remove from available agents pool
+  const wasInPool = state.availableAgents.some(a => a.tabId === tabId);
+  if (wasInPool) {
+    state.availableAgents = state.availableAgents.filter(a => a.tabId !== tabId);
+    chrome.storage.local.set({ availableAgents: state.availableAgents });
+    broadcastAvailableAgentsUpdate();
   }
 });
 
@@ -1298,7 +1480,8 @@ async function restoreStateFromStorage() {
       'session1_tabId',
       'session1_platform',
       'session2_tabId',
-      'session2_platform'
+      'session2_platform',
+      'availableAgents'
     ]);
     
     if (result.conversationHistory) {
@@ -1306,6 +1489,23 @@ async function restoreStateFromStorage() {
     }
     if (result.config) {
       state.config = { ...state.config, ...result.config };
+    }
+    
+    // Restore available agents pool
+    if (result.availableAgents && Array.isArray(result.availableAgents)) {
+      // Verify tabs still exist and filter out invalid ones
+      const validAgents = [];
+      for (const agent of result.availableAgents) {
+        try {
+          await chrome.tabs.get(agent.tabId);
+          validAgents.push(agent);
+        } catch (e) {
+          bgLog('Agent tab no longer exists, removing from pool:', agent.tabId);
+        }
+      }
+      state.availableAgents = validAgents;
+      await chrome.storage.local.set({ availableAgents: state.availableAgents });
+      bgLog('Restored available agents from storage:', validAgents.length);
     }
     
     // Restore session registrations
@@ -1389,27 +1589,25 @@ function detectPlatformFromUrl(url) {
   }
 }
 
-// Auto-register available chat tabs
+// Auto-register available chat tabs to pool (new proactive registration)
 async function autoRegisterChatTabs() {
-  bgLog('Auto-registering chat tabs...');
+  bgLog('Auto-registering chat tabs to pool...');
   
   try {
     // Get all tabs
     const tabs = await chrome.tabs.query({});
     
     // Filter to supported chat platforms
-    const chatTabs = tabs
-      .filter(tab => {
-        // Must have a valid URL
-        if (!tab.url) return false;
-        
-        // Exclude extension pages (but allow if it's a chat platform in extension context - shouldn't happen)
-        if (tab.url.startsWith('chrome-extension://')) return false;
-        
-        // Must be a supported chat platform
-        return isChatPlatform(tab.url);
-      })
-      .slice(0, 2); // Only take first 2
+    const chatTabs = tabs.filter(tab => {
+      // Must have a valid URL
+      if (!tab.url) return false;
+      
+      // Exclude extension pages
+      if (tab.url.startsWith('chrome-extension://')) return false;
+      
+      // Must be a supported chat platform
+      return isChatPlatform(tab.url);
+    });
     
     bgLog('Found chat tabs:', chatTabs.length, chatTabs.map(t => ({ id: t.id, url: t.url })));
     
@@ -1418,45 +1616,31 @@ async function autoRegisterChatTabs() {
       return;
     }
     
-    // Register first tab as Agent A if not already registered
-    if (chatTabs.length >= 1 && !state.session1.tabId) {
-      const tab1 = chatTabs[0];
-      const platform1 = detectPlatformFromUrl(tab1.url);
-      if (platform1) {
-        bgLog('Auto-registering tab', tab1.id, 'as Agent A (', platform1, ')');
-        await registerSession(1, tab1.id, platform1);
-      }
-    }
+    // Register all chat tabs to pool (if not already registered or assigned)
+    const assignedTabIds = [state.session1.tabId, state.session2.tabId].filter(Boolean);
+    const poolTabIds = state.availableAgents.map(a => a.tabId);
     
-    // Register second tab as Agent B if not already registered
-    if (chatTabs.length >= 2 && !state.session2.tabId) {
-      const tab2 = chatTabs[1];
-      const platform2 = detectPlatformFromUrl(tab2.url);
-      if (platform2) {
-        bgLog('Auto-registering tab', tab2.id, 'as Agent B (', platform2, ')');
-        await registerSession(2, tab2.id, platform2);
+    for (const tab of chatTabs) {
+      // Skip if already assigned to a slot or already in pool
+      if (assignedTabIds.includes(tab.id) || poolTabIds.includes(tab.id)) {
+        continue;
       }
-    }
-    
-    // If only one tab and session2 is empty, try to use it for session2
-    if (chatTabs.length === 1 && !state.session2.tabId && state.session1.tabId !== chatTabs[0].id) {
-      const tab = chatTabs[0];
+      
       const platform = detectPlatformFromUrl(tab.url);
       if (platform) {
-        bgLog('Auto-registering tab', tab.id, 'as Agent B (', platform, ')');
-        await registerSession(2, tab.id, platform);
+        bgLog('Auto-registering tab', tab.id, 'to pool (', platform, ')');
+        await registerToPool(tab.id, platform);
       }
     }
     
-    bgLog('Auto-registration complete');
-    broadcastStateUpdate();
+    bgLog('Auto-registration to pool complete');
     
   } catch (error) {
     bgError('Error in auto-register:', error);
   }
 }
 
-// Listen for tab updates to auto-register
+// Listen for tab updates to auto-register to pool
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // Only process when tab is fully loaded
   if (changeInfo.status !== 'complete') return;
@@ -1464,24 +1648,21 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // Check if this is a chat platform
   if (!isChatPlatform(tab.url)) return;
   
-  // Check if already registered
+  // Check if already assigned to a slot
   if (state.session1.tabId === tabId || state.session2.tabId === tabId) {
-    return; // Already registered
+    return; // Already assigned
   }
   
-  // Auto-register if we have space
-  if (!state.session1.tabId) {
-    const platform = detectPlatformFromUrl(tab.url);
-    if (platform) {
-      bgLog('Auto-registering new tab', tabId, 'as Agent A');
-      await registerSession(1, tabId, platform);
-    }
-  } else if (!state.session2.tabId) {
-    const platform = detectPlatformFromUrl(tab.url);
-    if (platform) {
-      bgLog('Auto-registering new tab', tabId, 'as Agent B');
-      await registerSession(2, tabId, platform);
-    }
+  // Check if already in pool
+  if (state.availableAgents.some(a => a.tabId === tabId)) {
+    return; // Already in pool
+  }
+  
+  // Register to pool
+  const platform = detectPlatformFromUrl(tab.url);
+  if (platform) {
+    bgLog('Auto-registering new tab', tabId, 'to pool');
+    await registerToPool(tabId, platform);
   }
 });
 

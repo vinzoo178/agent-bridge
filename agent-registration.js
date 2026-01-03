@@ -315,9 +315,17 @@
     // Make draggable
     makeDraggable(overlay);
     
-    // Initial registration check after a short delay (allow auto-registration to complete)
+    // Show "Auto-registering..." initially
+    updateUnregisteredUI();
+    
+    // Check registration status immediately (in case already registered)
+    checkExistingRegistration();
+    
+    // Also check after a short delay (allow auto-registration to complete)
     setTimeout(() => {
-      checkExistingRegistration();
+      if (!state.isRegistered) {
+        checkExistingRegistration();
+      }
     }, 1000);
     
     // Fallback check after longer delay (in case auto-registration is slow)
@@ -332,6 +340,27 @@
       }
     }, 5000);
     
+    // Periodic check every 2 seconds if not registered (catch missed registrations)
+    const periodicCheckInterval = setInterval(() => {
+      if (!state.isRegistered) {
+        checkExistingRegistration();
+      } else {
+        clearInterval(periodicCheckInterval);
+      }
+    }, 2000);
+    
+    // Stop periodic check after 30 seconds (to avoid infinite checking)
+    setTimeout(() => {
+      clearInterval(periodicCheckInterval);
+    }, 30000);
+    
+    // Also check when page becomes visible (user switches back to tab)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && !state.isRegistered) {
+        checkExistingRegistration();
+      }
+    });
+    
     // Listen for messages from background (primary synchronization method)
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.log('[AI Bridge Registration] Received message:', message.type);
@@ -341,7 +370,7 @@
         updateActionStatusFromState(message.state);
         return false;
       } else if (message.type === 'REGISTRATION_CONFIRMED') {
-        // Registration confirmed by background (e.g., from auto-register)
+        // Registration confirmed by background (assigned to slot)
         console.log('[AI Bridge Registration] Registration confirmed:', message);
         sendLog('INFO', 'Registration confirmed: Session ' + message.sessionNum);
         state.isRegistered = true;
@@ -358,6 +387,18 @@
         
         sendLog('INFO', 'UI updated after REGISTRATION_CONFIRMED');
         return false;
+      } else if (message.type === 'REGISTERED_TO_POOL') {
+        // Registered to pool (not assigned to slot yet)
+        console.log('[AI Bridge Registration] Registered to pool');
+        sendLog('INFO', 'Registered to pool');
+        updatePoolRegisteredUI();
+        return false;
+      } else if (message.type === 'REMOVED_FROM_POOL') {
+        // Removed from pool
+        console.log('[AI Bridge Registration] Removed from pool');
+        sendLog('INFO', 'Removed from pool');
+        updateUnregisteredUI();
+        return false;
       }
       
       return false;
@@ -369,10 +410,8 @@
   
   // Check existing registration using CHECK_TAB_REGISTRATION API (more reliable)
   async function checkExistingRegistration() {
-    // Skip if already registered (state should be updated via REGISTRATION_CONFIRMED messages)
-    if (state.isRegistered) {
-      return;
-    }
+    // Note: We check even if state.isRegistered is true, to handle cases where
+    // the state might be out of sync (e.g., after page reload)
     
     try {
       console.log('[AI Bridge Registration] Checking registration status...');
@@ -413,8 +452,10 @@
         
         sendLog('INFO', 'UI updated and event dispatched');
       } else {
-        // Not registered - show unregistered UI if not already registered
+        // Not registered - show unregistered UI
         sendLog('INFO', 'Not registered - checkResult: ' + JSON.stringify(response));
+        // Only update UI if we're not already showing registered state
+        // (to avoid flickering if check happens while already registered)
         if (!state.isRegistered) {
           updateUnregisteredUI();
         }
@@ -480,6 +521,57 @@
   }
   
   // ============================================
+  // PROACTIVE REGISTRATION TO POOL
+  // ============================================
+  
+  // Proactively register this tab to the available agents pool
+  async function registerToPool() {
+    if (!state.platform || state.platform === 'unknown') {
+      console.log('[AI Bridge Registration] Platform not detected, skipping pool registration');
+      return;
+    }
+    
+    try {
+      console.log('[AI Bridge Registration] Registering to pool...');
+      sendLog('INFO', 'Registering to available agents pool');
+      
+      const response = await chrome.runtime.sendMessage({
+        type: 'REGISTER_TO_POOL',
+        platform: state.platform
+      });
+      
+      if (response && response.success) {
+        console.log('[AI Bridge Registration] Successfully registered to pool');
+        sendLog('INFO', 'Registered to pool successfully');
+        // Update UI to show "Registered" status (but not assigned to slot)
+        updatePoolRegisteredUI();
+      } else {
+        console.error('[AI Bridge Registration] Pool registration failed:', response);
+        sendLog('ERROR', 'Pool registration failed: ' + JSON.stringify(response));
+      }
+    } catch (error) {
+      console.error('[AI Bridge Registration] Pool registration error:', error);
+      sendLog('ERROR', 'Pool registration error: ' + error.message);
+    }
+  }
+  
+  function updatePoolRegisteredUI() {
+    const overlay = document.getElementById('ai-bridge-overlay');
+    if (!overlay) return;
+    
+    const statusDot = overlay.querySelector('.status-dot');
+    const statusText = document.getElementById('overlay-status-text');
+    
+    if (statusDot) {
+      statusDot.classList.remove('disconnected');
+      statusDot.classList.add('connected');
+    }
+    if (statusText) {
+      statusText.textContent = 'Registered';
+    }
+  }
+  
+  // ============================================
   // INITIALIZATION - DO NOT MODIFY
   // ============================================
   
@@ -487,15 +579,24 @@
     console.log('[AI Bridge Registration] Initializing...');
     sendLog('INFO', 'Initializing registration module...');
     
+    // Proactively register to pool when page loads
+    const registerToPoolDelayed = () => {
+      setTimeout(() => {
+        registerToPool();
+      }, 2000); // Wait 2 seconds for page to fully load
+    };
+    
     // Wait for page to load
     if (document.readyState === 'loading') {
       sendLog('INFO', 'DOM still loading, will create overlay after DOMContentLoaded');
       document.addEventListener('DOMContentLoaded', () => {
         setTimeout(createOverlay, 1000);
+        registerToPoolDelayed();
       });
     } else {
       sendLog('INFO', 'DOM already loaded, will create overlay in 1s');
       setTimeout(createOverlay, 1000);
+      registerToPoolDelayed();
     }
   }
   

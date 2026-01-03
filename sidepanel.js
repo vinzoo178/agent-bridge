@@ -27,8 +27,8 @@ const elements = {
   backendLabel: document.getElementById('backend-label')
 };
 
-// Track selected template
-let selectedTemplate = null;
+// Track selected template (default: debate)
+let selectedTemplate = 'debate';
 
 // Template generators - take topic as input
 const promptGenerators = {
@@ -117,6 +117,22 @@ document.addEventListener('DOMContentLoaded', () => {
 function initializeUI() {
   elements.startBtn.disabled = true;
   elements.stopBtn.disabled = true;
+  
+  // Enable send button if there's text in the input
+  updateSendButtonState();
+}
+
+// Update send button state based on input text and session status
+function updateSendButtonState(forceCanStart = null) {
+  const hasText = elements.topicInput.value.trim().length > 0;
+  
+  if (forceCanStart !== null) {
+    // If session state is provided, use it
+    elements.startBtn.disabled = !forceCanStart && !hasText;
+  } else {
+    // Otherwise, enable if there's text
+    elements.startBtn.disabled = !hasText;
+  }
 }
 
 // Load state and history only (called repeatedly)
@@ -200,6 +216,15 @@ function setupEventListeners() {
       const topic = elements.topicInput.value.trim();
       elements.initialPrompt.value = promptGenerators[selectedTemplate](topic);
     }
+    
+    // Enable send button when there's text (even if sessions not connected)
+    const hasText = elements.topicInput.value.trim().length > 0;
+    if (hasText) {
+      elements.startBtn.disabled = false;
+    } else {
+      // Re-check session state to determine if button should be disabled
+      updateSendButtonState();
+    }
   });
   
   // Enter key to send (normal chat behavior)
@@ -227,17 +252,25 @@ function setupEventListeners() {
   // Clear history
   elements.clearHistory.addEventListener('click', clearHistory);
   
-  // Auto-register button
-  const autoRegisterBtn = document.getElementById('auto-register-btn');
-  if (autoRegisterBtn) {
-    autoRegisterBtn.addEventListener('click', autoRegisterAgents);
-  }
-  
   // Swap agents button
   const swapAgentsBtn = document.getElementById('swap-agents-btn');
   if (swapAgentsBtn) {
     swapAgentsBtn.addEventListener('click', swapAgents);
   }
+  
+  // Release buttons
+  const releaseSession1Btn = document.getElementById('release-session1-btn');
+  if (releaseSession1Btn) {
+    releaseSession1Btn.addEventListener('click', () => releaseAgentFromSlot(1));
+  }
+  
+  const releaseSession2Btn = document.getElementById('release-session2-btn');
+  if (releaseSession2Btn) {
+    releaseSession2Btn.addEventListener('click', () => releaseAgentFromSlot(2));
+  }
+  
+  // Load available agents
+  loadAvailableAgents();
   
   // Listen for updates from background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -256,6 +289,9 @@ function setupEventListeners() {
         break;
       case 'BACKEND_STATUS_UPDATE':
         updateBackendStatusUI(message.status);
+        break;
+      case 'AVAILABLE_AGENTS_UPDATE':
+        renderAvailableAgents(message.agents);
         break;
     }
     sendResponse({ received: true });
@@ -419,7 +455,7 @@ function updateUI(state) {
   const canStart = state.session1.connected && state.session2.connected && !isActive;
   const canStop = isActive;
   
-  elements.startBtn.disabled = !canStart;
+  updateSendButtonState(canStart);
   elements.stopBtn.disabled = !canStop;
   
   // Update swap button
@@ -453,6 +489,12 @@ function updateSessionCard(card, statusEl, platformEl, connected, platform) {
   
   statusEl.textContent = connected ? 'Connected' : 'Disconnected';
   statusEl.className = `session-status ${connected ? 'connected' : 'disconnected'}`;
+  
+  // Show/hide release button
+  const releaseBtn = card.querySelector('.btn-release');
+  if (releaseBtn) {
+    releaseBtn.style.display = connected ? 'flex' : 'none';
+  }
   
   if (connected && platform) {
     const icon = platformIcons[platform] || platformIcons.unknown;
@@ -537,6 +579,7 @@ async function startConversation() {
   setTimeout(() => {
     elements.startBtn.innerHTML = '<svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Send';
     loadState();
+    updateSendButtonState();
   }, 500);
 }
 
@@ -970,38 +1013,8 @@ async function clearLogs() {
 }
 
 // ============================================
-// AUTO-REGISTER & SWAP AGENTS
+// SWAP AGENTS
 // ============================================
-
-async function autoRegisterAgents() {
-  const btn = document.getElementById('auto-register-btn');
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<svg class="btn-icon w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Registering...';
-  }
-  
-  try {
-    const response = await chrome.runtime.sendMessage({ type: 'AUTO_REGISTER_TABS' });
-    
-    if (response && response.success) {
-      showToast('✅ Auto-registration triggered!', 'success');
-      // Reload state after a delay
-      setTimeout(() => {
-        loadStateOnly();
-      }, 1000);
-    } else {
-      showToast('⚠️ ' + (response.error || 'Auto-registration failed'), 'error');
-    }
-  } catch (error) {
-    console.error('[Side Panel] Auto-register error:', error);
-    showToast('❌ Failed to auto-register', 'error');
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = '<svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Auto-Register';
-    }
-  }
-}
 
 async function swapAgents() {
   const btn = document.getElementById('swap-agents-btn');
@@ -1024,6 +1037,161 @@ async function swapAgents() {
     showToast('❌ Failed to swap agents', 'error');
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+// ============================================
+// AVAILABLE AGENTS MANAGEMENT
+// ============================================
+
+async function loadAvailableAgents() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_AVAILABLE_AGENTS' });
+    if (response && response.success) {
+      renderAvailableAgents(response.agents);
+    }
+  } catch (error) {
+    console.error('[Side Panel] Failed to load available agents:', error);
+  }
+}
+
+function renderAvailableAgents(agents) {
+  const listContainer = document.getElementById('available-agents-list');
+  if (!listContainer) return;
+  
+  if (!agents || agents.length === 0) {
+    listContainer.innerHTML = `
+      <div class="empty-state">
+        <p>No agents available</p>
+        <p class="empty-hint">Open chat tabs to see them here</p>
+      </div>
+    `;
+    return;
+  }
+  
+  const platformIconsMap = {
+    gemini: '✨',
+    chatgpt: '🤖',
+    deepseek: '🔍',
+    duckduckgo: '🦆',
+    unknown: '❓'
+  };
+  
+  listContainer.innerHTML = agents.map(agent => {
+    const icon = platformIconsMap[agent.platform] || platformIconsMap.unknown;
+    const platformName = agent.platform ? agent.platform.charAt(0).toUpperCase() + agent.platform.slice(1) : 'Unknown';
+    const title = agent.title || `${platformName} Chat`;
+    
+    return `
+      <div class="available-agent-item" data-tab-id="${agent.tabId}">
+        <div class="agent-info">
+          <span class="agent-icon">${icon}</span>
+          <div class="agent-details">
+            <div class="agent-title">${escapeHtml(title)}</div>
+            <div class="agent-platform">${platformName}</div>
+          </div>
+        </div>
+        <div class="agent-actions">
+          <button class="btn-assign btn-assign-a" data-tab-id="${agent.tabId}" data-slot="1" title="Assign to Agent A">
+            A
+          </button>
+          <button class="btn-assign btn-assign-b" data-tab-id="${agent.tabId}" data-slot="2" title="Assign to Agent B">
+            B
+          </button>
+          <button class="btn-remove" data-tab-id="${agent.tabId}" title="Remove from pool">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  // Add event listeners
+  listContainer.querySelectorAll('.btn-assign').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const tabId = parseInt(btn.dataset.tabId);
+      const sessionNum = parseInt(btn.dataset.slot);
+      await assignAgentToSlot(tabId, sessionNum);
+    });
+  });
+  
+  listContainer.querySelectorAll('.btn-remove').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const tabId = parseInt(btn.dataset.tabId);
+      await removeAgentFromPool(tabId);
+    });
+  });
+}
+
+async function assignAgentToSlot(tabId, sessionNum) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'ASSIGN_AGENT_TO_SLOT',
+      tabId: tabId,
+      sessionNum: sessionNum
+    });
+    
+    if (response && response.success) {
+      showToast(`✅ Assigned to Agent ${sessionNum === 1 ? 'A' : 'B'}`, 'success');
+      // Reload state and agents
+      setTimeout(() => {
+        loadStateOnly();
+        loadAvailableAgents();
+      }, 500);
+    } else {
+      showToast('❌ Failed to assign agent', 'error');
+    }
+  } catch (error) {
+    console.error('[Side Panel] Assign error:', error);
+    showToast('❌ Failed to assign agent', 'error');
+  }
+}
+
+async function removeAgentFromPool(tabId) {
+  if (!confirm('Remove this agent from the pool?')) return;
+  
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'REMOVE_AGENT_FROM_POOL',
+      tabId: tabId
+    });
+    
+    if (response && response.success) {
+      showToast('🗑️ Agent removed', 'success');
+      loadAvailableAgents();
+    } else {
+      showToast('❌ Failed to remove agent', 'error');
+    }
+  } catch (error) {
+    console.error('[Side Panel] Remove error:', error);
+    showToast('❌ Failed to remove agent', 'error');
+  }
+}
+
+async function releaseAgentFromSlot(sessionNum) {
+  if (!confirm(`Release Agent ${sessionNum === 1 ? 'A' : 'B'} back to the available agents pool?`)) return;
+  
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'UNREGISTER_SESSION',
+      sessionNum: sessionNum
+    });
+    
+    if (response && response.success) {
+      showToast(`✅ Agent ${sessionNum === 1 ? 'A' : 'B'} released`, 'success');
+      // Reload state and agents
+      setTimeout(() => {
+        loadStateOnly();
+        loadAvailableAgents();
+      }, 500);
+    } else {
+      showToast('❌ Failed to release agent', 'error');
+    }
+  } catch (error) {
+    console.error('[Side Panel] Release error:', error);
+    showToast('❌ Failed to release agent', 'error');
   }
 }
 
