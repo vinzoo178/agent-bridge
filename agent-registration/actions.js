@@ -9,7 +9,7 @@
 
     // Validate dependencies
     if (!state || !UI) {
-        console.error('[AI Bridge Registration] Missing dependencies for actions.js');
+        sendLog.bind(null, 'ERROR')('[AI Bridge Registration] Missing dependencies for actions.js');
         return;
     }
 
@@ -18,7 +18,7 @@
     // ============================================
 
     async function registerAsSession(num) {
-        console.log('[AI Bridge Registration] Registering as session:', num);
+        sendLog.bind(null, 'INFO')('[AI Bridge Registration] Registering as session:', num);
         state.sessionNum = num;
 
         try {
@@ -28,7 +28,7 @@
                 platform: state.platform
             });
 
-            console.log('[AI Bridge Registration] Response:', response);
+            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Response:', response);
 
             if (response && response.success) {
                 state.isRegistered = true;
@@ -40,10 +40,10 @@
                     detail: { sessionNum: num, platform: state.platform }
                 }));
 
-                console.log('[AI Bridge Registration] SUCCESS! Session:', num);
+                sendLog.bind(null, 'INFO')('[AI Bridge Registration] SUCCESS! Session:', num);
                 return true;
             } else {
-                console.error('[AI Bridge Registration] Failed:', response);
+                sendLog.bind(null, 'ERROR')('[AI Bridge Registration] Failed:', response);
                 alert('Registration failed: ' + JSON.stringify(response));
                 return false;
             }
@@ -54,7 +54,7 @@
     }
 
     async function unregisterSession() {
-        console.log('[AI Bridge Registration] Unregistering session:', state.sessionNum);
+        sendLog.bind(null, 'INFO')('[AI Bridge Registration] Unregistering session:', state.sessionNum);
 
         try {
             await chrome.runtime.sendMessage({
@@ -69,9 +69,9 @@
 
             window.dispatchEvent(new CustomEvent('aiBridgeUnregistered'));
 
-            console.log('[AI Bridge Registration] Unregistered successfully');
+            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Unregistered successfully');
         } catch (error) {
-            console.error('[AI Bridge Registration] Unregister error:', error);
+            sendLog.bind(null, 'ERROR')('[AI Bridge Registration] Unregister error:', error);
             if (error.message && error.message.includes('context invalidated')) {
                 alert('Extension was updated. Please refresh the page (F5).');
             }
@@ -81,18 +81,18 @@
     // Check existing registration using CHECK_TAB_REGISTRATION API
     async function checkExistingRegistration() {
         try {
-            console.log('[AI Bridge Registration] Checking registration status...');
+            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Checking registration status...');
             sendLog('INFO', 'Checking registration status...');
 
             const response = await chrome.runtime.sendMessage({ type: 'CHECK_TAB_REGISTRATION' });
 
             if (!response || typeof response !== 'object' || !('isRegistered' in response)) {
-                console.warn('[AI Bridge Registration] Received unexpected response format:', response);
+                sendLog.bind(null, 'WARN')('[AI Bridge Registration] Received unexpected response format:', response);
                 sendLog('WARN', 'Received unexpected response format: ' + JSON.stringify(response));
                 return;
             }
 
-            console.log('[AI Bridge Registration] Check result:', response);
+            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Check result:', response);
             sendLog('INFO', 'Registration check result - isRegistered: ' + (response?.isRegistered || false) + ', sessionNum: ' + (response?.sessionNum || 'null'));
 
             if (response && response.isRegistered === true) {
@@ -101,7 +101,7 @@
 
                 // Handle Pool Registration
                 if (response.inPool) {
-                    console.log('[AI Bridge Registration] Found in pool');
+                    sendLog.bind(null, 'INFO')('[AI Bridge Registration] Found in pool');
                     sendLog('INFO', 'Found in pool');
                     state.isRegistered = true;
                     state.sessionNum = null;
@@ -116,7 +116,7 @@
                 state.sessionNum = response.sessionNum;
                 state.inPool = false;
 
-                console.log('[AI Bridge Registration] Registration found! Session:', response.sessionNum);
+                sendLog.bind(null, 'INFO')('[AI Bridge Registration] Registration found! Session:', response.sessionNum);
                 sendLog('INFO', 'Registration found! Session: ' + response.sessionNum);
 
                 const role = response.role || `Participant ${response.sessionNum}`;
@@ -159,7 +159,7 @@
     async function registerToPool() {
         if (isRegisteringToPool) return;
         if (state.isRegistered && state.sessionNum) {
-            console.log('[AI Bridge Registration] Already participating in session', state.sessionNum);
+            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Already participating in session', state.sessionNum);
             return;
         }
         if (state.isRegistered && state.inPool) return;
@@ -169,7 +169,7 @@
                 if (state.platform && state.platform !== 'unknown') {
                     registerToPool();
                 } else {
-                    console.log('[AI Bridge Registration] Platform not detected, skipping pool registration');
+                    sendLog.bind(null, 'INFO')('[AI Bridge Registration] Platform not detected, skipping pool registration');
                 }
             }, 1000);
             return;
@@ -177,7 +177,7 @@
 
         try {
             isRegisteringToPool = true;
-            console.log('[AI Bridge Registration] Registering to pool... Platform:', state.platform);
+            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Registering to pool... Platform:', state.platform);
 
             const response = await chrome.runtime.sendMessage({
                 type: 'REGISTER_TO_POOL',
@@ -185,14 +185,14 @@
             });
 
             if (response && response.success) {
-                console.log('[AI Bridge Registration] Successfully registered to pool request sent');
+                sendLog.bind(null, 'INFO')('[AI Bridge Registration] Successfully registered to pool request sent');
                 sendLog('INFO', 'Registered to pool successfully');
                 state.isRegistered = true;
                 state.inPool = true;
                 UI.updatePoolRegisteredUI();
             }
         } catch (error) {
-            console.error('[AI Bridge Registration] Pool registration failed:', error);
+            sendLog.bind(null, 'ERROR')('[AI Bridge Registration] Pool registration failed:', error);
             // Silently fail for pool registration to avoid annoyance
         } finally {
             isRegisteringToPool = false;
@@ -219,11 +219,11 @@
         }
 
         if (isContextInvalidated) {
-            if (!silent) console.log('[AI Bridge Registration] Extension context invalidated.');
+            if (!silent) sendLog.bind(null, 'INFO')('[AI Bridge Registration] Extension context invalidated.');
             return; // Stop processing
         }
 
-        console.error('[AI Bridge Registration] Error:', error);
+        sendLog.bind(null, 'ERROR')('[AI Bridge Registration] Error:', error);
         if (!silent) alert('Registration error: ' + (error.message || error));
     }
 

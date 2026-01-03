@@ -52,6 +52,6 @@
     window.AIBridge.platform = state.platform;
     window.AIBridge.sendLog = sendLog;
 
-    console.log('[AI Bridge Registration] Platform:', state.platform);
-    console.log('[AI Bridge Registration] Adapter:', platformAdapter ? 'Found' : 'Legacy mode');
+    sendLog.bind(null, 'INFO')('[AI Bridge Registration] Platform:', state.platform);
+    sendLog.bind(null, 'INFO')('[AI Bridge Registration] Adapter:', platformAdapter ? 'Found' : 'Legacy mode');
 })();

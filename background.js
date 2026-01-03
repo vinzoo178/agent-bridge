@@ -53,10 +53,10 @@ async function loadLogsFromStorage(addStartupLog = false) {
       if (sessionResult.debugLogs && Array.isArray(sessionResult.debugLogs)) {
         loadedLogs = sessionResult.debugLogs;
         loadedCount = loadedLogs.length;
-        console.log(`[Background] Loaded ${loadedCount} logs from session storage`);
+        bgLog(`[Background] Loaded ${loadedCount} logs from session storage`);
       }
     } catch (e) {
-      console.warn('[Background] Session storage not available:', e);
+      bgWarn('[Background] Session storage not available:', e);
     }
 
     // Step 2: If no session logs, try local storage (fallback - important logs only)
@@ -67,10 +67,10 @@ async function loadLogsFromStorage(addStartupLog = false) {
         if (localResult.debugLogs && Array.isArray(localResult.debugLogs)) {
           loadedLogs = localResult.debugLogs;
           loadedCount = loadedLogs.length;
-          console.log(`[Background] Loaded ${loadedCount} logs from local storage (fallback - important logs only)`);
+          bgLog(`[Background] Loaded ${loadedCount} logs from local storage (fallback - important logs only)`);
         }
       } catch (e) {
-        console.warn('[Background] Failed to load from local storage:', e);
+        bgWarn('[Background] Failed to load from local storage:', e);
       }
     }
 
@@ -90,17 +90,17 @@ async function loadLogsFromStorage(addStartupLog = false) {
         if (debugLogs.length > MAX_LOGS) {
           debugLogs.splice(0, debugLogs.length - MAX_LOGS);
         }
-        console.log(`[Background] Merged ${newLogs.length} logs from storage, total: ${debugLogs.length}`);
+        bgLog(`[Background] Merged ${newLogs.length} logs from storage, total: ${debugLogs.length}`);
       } else if (!logsLoaded) {
         // First load and storage has logs - replace memory (normal startup)
         debugLogs.length = 0;
         debugLogs.push(...loadedLogs);
-        console.log(`[Background] Loaded ${loadedCount} logs from storage (first load)`);
+        bgLog(`[Background] Loaded ${loadedCount} logs from storage (first load)`);
       }
       logsLoaded = true;
     } else if (!logsLoaded) {
       // First load but no logs in storage - just mark as loaded, keep memory as is
-      console.log(`[Background] No logs in storage, keeping memory logs (${debugLogs.length} logs)`);
+      bgLog(`[Background] No logs in storage, keeping memory logs (${debugLogs.length} logs)`);
       logsLoaded = true;
     }
 
@@ -128,7 +128,7 @@ async function loadLogsFromStorage(addStartupLog = false) {
         try {
           await chrome.storage.session.set({ debugLogs: logsToSave });
         } catch (e) {
-          console.warn('[Background] Session storage not available:', e);
+          bgWarn('[Background] Session storage not available:', e);
         }
 
         // Save to local storage: ERROR/WARN logs + last 50 logs (as per recommendation)
@@ -149,17 +149,17 @@ async function loadLogsFromStorage(addStartupLog = false) {
 
         try {
           await chrome.storage.local.set({ debugLogs: logsForLocal });
-          console.log(`[Background] Added startup log, total logs: ${debugLogs.length}`);
+          bgLog(`[Background] Added startup log, total logs: ${debugLogs.length}`);
         } catch (e) {
-          console.error('[Background] Failed to save startup log to local storage:', e);
+          bgError('[Background] Failed to save startup log to local storage:', e);
         }
       } catch (e) {
-        console.error('[Background] Failed to save startup log:', e);
+        bgError('[Background] Failed to save startup log:', e);
       }
     }
 
   } catch (e) {
-    console.error('[Background] Failed to load logs from storage:', e);
+    bgError('[Background] Failed to load logs from storage:', e);
     // Try to add error log even if storage failed
     try {
       const errorEntry = {
@@ -171,7 +171,7 @@ async function loadLogsFromStorage(addStartupLog = false) {
       debugLogs.push(errorEntry);
       logsLoaded = true; // Mark as loaded even if failed, to avoid retrying
     } catch (e2) {
-      console.error('[Background] Failed to add error log:', e2);
+      bgError('[Background] Failed to add error log:', e2);
     }
   }
 }
@@ -191,9 +191,9 @@ async function saveLogsToStorage() {
       // This is the main backup that persists during the session
       try {
         await chrome.storage.session.set({ debugLogs: logsToSave });
-        console.log(`[Background] ✓ Saved ${logsToSave.length} logs to session storage`);
+        bgLog(`[Background] ✓ Saved ${logsToSave.length} logs to session storage`);
       } catch (e) {
-        console.warn('[Background] Session storage not available:', e);
+        bgWarn('[Background] Session storage not available:', e);
       }
 
       // Step 2: Save to local storage (important logs only - persist across reload)
@@ -215,25 +215,25 @@ async function saveLogsToStorage() {
 
       try {
         await chrome.storage.local.set({ debugLogs: logsForLocal });
-        console.log(`[Background] ✓ Saved ${logsForLocal.length} important logs to local storage (${importantLogs.length} ERROR/WARN + ${recentLogs.length} recent)`);
+        bgLog(`[Background] ✓ Saved ${logsForLocal.length} important logs to local storage (${importantLogs.length} ERROR/WARN + ${recentLogs.length} recent)`);
       } catch (e) {
-        console.error('[Background] Failed to save to local storage:', e);
+        bgError('[Background] Failed to save to local storage:', e);
         // If storage is full, try to keep only ERROR logs
         if (e.message && e.message.includes('QUOTA_BYTES')) {
-          console.warn('[Background] Local storage quota exceeded, keeping only ERROR logs');
+          bgWarn('[Background] Local storage quota exceeded, keeping only ERROR logs');
           const errorLogs = logsToSave
             .filter(log => log.level === 'ERROR')
             .slice(-MAX_RECENT_LOGS);
           try {
             await chrome.storage.local.set({ debugLogs: errorLogs });
-            console.log(`[Background] Kept ${errorLogs.length} ERROR logs only`);
+            bgLog(`[Background] Kept ${errorLogs.length} ERROR logs only`);
           } catch (e2) {
-            console.error('[Background] Failed to save error logs:', e2);
+            bgError('[Background] Failed to save error logs:', e2);
           }
         }
       }
     } catch (e) {
-      console.error('[Background] Failed to save logs:', e);
+      bgError('[Background] Failed to save logs:', e);
     }
   }, 300); // 300ms debounce for faster saves while avoiding excessive writes
 }
@@ -254,7 +254,7 @@ async function checkStorageUsage() {
       // Session storage might not be available
     }
 
-    console.log(`[Background] Storage usage - Local: ${localUsage} bytes / ${localQuota} bytes (${localUsagePercent}%), Session: ${sessionUsage} bytes`);
+    bgLog(`[Background] Storage usage - Local: ${localUsage} bytes / ${localQuota} bytes (${localUsagePercent}%), Session: ${sessionUsage} bytes`);
     return {
       local: { usage: localUsage, quota: localQuota, usagePercent: localUsagePercent },
       session: { usage: sessionUsage },
@@ -263,7 +263,7 @@ async function checkStorageUsage() {
       usagePercent: localUsagePercent
     };
   } catch (e) {
-    console.error('[Background] Failed to check storage usage:', e);
+    bgError('[Background] Failed to check storage usage:', e);
     return null;
   }
 }
@@ -271,9 +271,9 @@ async function checkStorageUsage() {
 // Initialize: load logs on startup (will be called in listeners too)
 // This runs immediately when service worker starts
 loadLogsFromStorage(true).then(() => {
-  console.log('[Background] Logs initialized on service worker startup');
+  bgLog('[Background] Logs initialized on service worker startup');
 }).catch(e => {
-  console.error('[Background] Failed to initialize logs:', e);
+  bgError('[Background] Failed to initialize logs:', e);
 });
 
 // Always restore state from storage on startup to clean up stale tabs
@@ -321,6 +321,10 @@ function bgLog(...args) {
 
 function bgError(...args) {
   addLog('Background', 'ERROR', args.join(' '));
+}
+
+function bgWarn(...args) {
+  addLog('Background', 'WARN', args.join(' '));
 }
 
 // ============================================
@@ -422,9 +426,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.action.onClicked.addListener(async (tab) => {
   try {
     await chrome.sidePanel.open({ windowId: tab.windowId });
-    console.log('Side panel opened');
+    bgLog('Side panel opened');
   } catch (error) {
-    console.error('Failed to open side panel:', error);
+    bgError('Failed to open side panel:', error);
   }
 });
 
@@ -454,9 +458,9 @@ async function handleMessage(message, sender) {
   switch (message.type) {
     case 'REGISTER_SESSION':
       // Legacy: Direct assignment to session slot (for backward compatibility)
-      console.log('[Background] REGISTER_SESSION request, sender.tab:', sender.tab);
+      bgLog('[Background] REGISTER_SESSION request, sender.tab:', sender.tab);
       if (!sender.tab || !sender.tab.id) {
-        console.error('[Background] ERROR: No tab ID in sender!');
+        bgError('[Background] ERROR: No tab ID in sender!');
         return { success: false, error: 'No tab ID' };
       }
       return registerSession(message.sessionNum, sender.tab.id, message.platform);
@@ -624,7 +628,7 @@ async function handleMessage(message, sender) {
           try {
             await loadLogsFromStorage(false);
           } catch (e) {
-            console.warn('[Background] Failed to load logs before ADD_LOG:', e);
+            bgWarn('[Background] Failed to load logs before ADD_LOG:', e);
             logsLoaded = true; // Mark as loaded to avoid retrying
           }
         }
@@ -637,9 +641,9 @@ async function handleMessage(message, sender) {
 
         // Save to storage (debounced)
         saveLogsToStorage();
-        console.log(`[Background] ADD_LOG: Added log entry, total logs: ${debugLogs.length}`);
+        bgLog(`[Background] ADD_LOG: Added log entry, total logs: ${debugLogs.length}`);
       } else {
-        console.warn('[Background] ADD_LOG: No entry provided in message');
+        bgWarn('[Background] ADD_LOG: No entry provided in message');
       }
       return { success: true, logCount: debugLogs.length };
 
@@ -659,7 +663,7 @@ async function handleMessage(message, sender) {
         try {
           await loadLogsFromStorage(false);
         } catch (e) {
-          console.error('[Background] Error loading logs in GET_LOGS:', e);
+          bgError('[Background] Error loading logs in GET_LOGS:', e);
           // Continue anyway with whatever logs we have in memory
           logsLoaded = true; // Mark as loaded to avoid retrying
         }
@@ -667,7 +671,7 @@ async function handleMessage(message, sender) {
 
       // Don't add a log entry for GET_LOGS - it would create noise
       // Just return what we have
-      console.log(`[Background] GET_LOGS: Returning ${debugLogs.length} logs from memory`);
+      bgLog(`[Background] GET_LOGS: Returning ${debugLogs.length} logs from memory`);
 
       // Return a copy to avoid issues
       return { logs: [...debugLogs] };
@@ -676,10 +680,10 @@ async function handleMessage(message, sender) {
       debugLogs.length = 0;
       // Clear from all storage types
       chrome.storage.session.set({ debugLogs: [] }).catch(e => {
-        console.warn('[Background] Failed to clear session storage:', e);
+        bgWarn('[Background] Failed to clear session storage:', e);
       });
       chrome.storage.local.set({ debugLogs: [] }).catch(e => {
-        console.error('[Background] Failed to clear local storage:', e);
+        bgError('[Background] Failed to clear local storage:', e);
       });
       return { success: true };
 
@@ -868,6 +872,12 @@ async function assignAgentToSlot(tabId, position) {
   // Find agent in pool
   const agent = state.availableAgents.find(a => a.tabId === tabId);
   if (!agent) {
+    // Check if already assigned (idempotent)
+    const existing = state.participants.find(p => p.tabId === tabId);
+    if (existing) {
+      bgLog('Agent already assigned to participant:', existing.role);
+      return { success: true, participant: existing, alreadyAssigned: true };
+    }
     return { success: false, error: 'Agent not found in pool' };
   }
 
@@ -1098,7 +1108,7 @@ async function handleAIResponse(response, sessionNum, requestId) {
   };
 
   state.conversationHistory.push(historyEntry);
-  console.log('[Background] Added to history, total messages:', state.conversationHistory.length);
+  bgLog('[Background] Added to history, total messages:', state.conversationHistory.length);
 
   // Save to storage
   await chrome.storage.local.set({
@@ -1111,7 +1121,7 @@ async function handleAIResponse(response, sessionNum, requestId) {
 
   // Check if max turns reached
   if (state.conversationHistory.length >= state.config.maxTurns) {
-    console.log('[Background] Max turns reached, stopping');
+    bgLog('[Background] Max turns reached, stopping');
     await stopConversation();
     return { success: true, stopped: true, reason: 'Max turns reached' };
   }
@@ -1138,20 +1148,20 @@ async function handleAIResponse(response, sessionNum, requestId) {
   state.currentTurn = nextParticipantIndex;
 
   const nextParticipant = state.participants[nextParticipantIndex];
-  console.log('[Background] Will send to participant', nextParticipantIndex + 1, '(', nextParticipant.platform, ') after', state.config.autoReplyDelay, 'ms');
+  bgLog('[Background] Will send to participant', nextParticipantIndex + 1, '(', nextParticipant.platform, ') after', state.config.autoReplyDelay, 'ms');
 
   // Delay before sending to next participant
   setTimeout(async () => {
     if (state.isActive && state.participants.length > 0) {
-      console.log('[Background] Sending message to participant', nextParticipantIndex + 1);
+      bgLog('[Background] Sending message to participant', nextParticipantIndex + 1);
 
       // Build message with context from recent conversation
       const messageWithContext = buildMessageWithContext(finalResponse, participantIndex);
 
       const result = await sendMessageToParticipant(nextParticipantIndex, messageWithContext);
-      console.log('[Background] Send result:', result);
+      bgLog('[Background] Send result:', result);
     } else {
-      console.log('[Background] Conversation no longer active or no participants, not sending');
+      bgLog('[Background] Conversation no longer active or no participants, not sending');
     }
   }, state.config.autoReplyDelay);
 
@@ -1193,7 +1203,7 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
   contextStr += '\n\n─'.repeat(40) + '\n';
   contextStr += '👉 Hãy tiếp tục cuộc thảo luận dựa trên context ở trên. Trả lời NGẮN GỌN (2-4 câu).';
 
-  console.log('[Background] Built message with', recentMessages.length, 'context messages');
+  bgLog('[Background] Built message with', recentMessages.length, 'context messages');
 
   return contextStr;
 }
@@ -1495,7 +1505,7 @@ function smartTruncate(text, maxLength) {
     return text;
   }
 
-  console.log('[Background] Smart truncating from', text.length, 'to max', maxLength);
+  bgLog('[Background] Smart truncating from', text.length, 'to max', maxLength);
 
   // Find the last complete sentence within maxLength
   const truncated = text.substring(0, maxLength);
@@ -1517,12 +1527,12 @@ function smartTruncate(text, maxLength) {
     lastSentenceEnd = truncated.length;
   }
 
-  console.log('[Background] Last sentence end at:', lastSentenceEnd);
+  bgLog('[Background] Last sentence end at:', lastSentenceEnd);
 
   // If found a sentence boundary at reasonable position (at least 30% of content)
   if (lastSentenceEnd > maxLength * 0.3) {
     const result = text.substring(0, lastSentenceEnd).trim();
-    console.log('[Background] Truncated at sentence boundary, new length:', result.length);
+    bgLog('[Background] Truncated at sentence boundary, new length:', result.length);
     return result;
   }
 
@@ -1530,7 +1540,7 @@ function smartTruncate(text, maxLength) {
   const lastNewline = truncated.lastIndexOf('\n');
   if (lastNewline > maxLength * 0.5) {
     const result = text.substring(0, lastNewline).trim();
-    console.log('[Background] Truncated at newline, new length:', result.length);
+    bgLog('[Background] Truncated at newline, new length:', result.length);
     return result;
   }
 
@@ -1538,27 +1548,29 @@ function smartTruncate(text, maxLength) {
   const lastSpace = truncated.lastIndexOf(' ');
   if (lastSpace > maxLength * 0.7) {
     const result = text.substring(0, lastSpace).trim();
-    console.log('[Background] Truncated at word boundary, new length:', result.length);
+    bgLog('[Background] Truncated at word boundary, new length:', result.length);
     return result + '...';
   }
 
   // Last resort: hard cut (shouldn't happen with maxLength=2000)
-  console.log('[Background] Hard truncate (fallback)');
+  bgLog('[Background] Hard truncate (fallback)');
   return truncated.trim() + '...';
 }
 
 // Check if a specific tab is registered
 async function checkTabRegistration(tabId) {
-  console.log('[Background] ====== CHECK TAB REGISTRATION ======');
-  console.log('[Background] Checking for tabId:', tabId, 'type:', typeof tabId);
+  bgLog('[Background] ====== CHECK TAB REGISTRATION ======');
+  bgLog('[Background] Checking for tabId:', tabId, 'type:', typeof tabId);
 
-  // Always restore from storage first to ensure we have latest state
-  await restoreStateFromStorage();
+  // Only restore from storage if we don't have participants yet
+  if (state.participants.length === 0) {
+    await restoreStateFromStorage();
+  }
 
-  console.log('[Background] After restore - Participants:', state.participants.length);
+  bgLog('[Background] After restore - Participants:', state.participants.length);
 
   if (!tabId) {
-    console.log('[Background] ERROR: tabId is null/undefined');
+    bgLog('[Background] ERROR: tabId is null/undefined');
     return { isRegistered: false, error: 'No tabId provided' };
   }
 
@@ -1717,7 +1729,8 @@ async function restoreStateFromStorage() {
       'session1_platform',
       'session2_tabId',
       'session2_platform',
-      'availableAgents'
+      'availableAgents',
+      'participants'
     ]);
 
     if (result.conversationHistory) {
@@ -1733,8 +1746,10 @@ async function restoreStateFromStorage() {
       const validAgents = [];
       for (const agent of result.availableAgents) {
         try {
-          await chrome.tabs.get(agent.tabId);
-          validAgents.push(agent);
+          if (agent.tabId) {
+            await chrome.tabs.get(agent.tabId);
+            validAgents.push(agent);
+          }
         } catch (e) {
           bgLog('Agent tab no longer exists, removing from pool:', agent.tabId);
         }
@@ -1749,11 +1764,19 @@ async function restoreStateFromStorage() {
       // Verify tabs still exist and filter out invalid ones
       const validParticipants = [];
       for (const participant of result.participants) {
-        try {
-          await chrome.tabs.get(participant.tabId);
+        if (!participant) continue; // Skip nulls if any
+
+        if (participant.tabId) {
+          try {
+            await chrome.tabs.get(participant.tabId);
+            validParticipants.push(participant);
+          } catch (e) {
+            bgLog('Participant tab no longer exists, removing:', participant.tabId);
+            // Don't add back to array, effectively removing it
+          }
+        } else {
+          // Empty slot (no tabId) - keep it
           validParticipants.push(participant);
-        } catch (e) {
-          bgLog('Participant tab no longer exists, removing:', participant.tabId);
         }
       }
       state.participants = validParticipants;

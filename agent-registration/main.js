@@ -10,7 +10,7 @@
     const Actions = window.AIBridge; // Attached directly
 
     if (!state || !UI || !Actions.checkExistingRegistration) {
-        console.error('[AI Bridge Registration] Missing dependencies for main.js');
+        sendLog.bind(null, 'ERROR')('[AI Bridge Registration] Missing dependencies for main.js');
         return;
     }
 
@@ -19,7 +19,7 @@
     // ============================================
 
     function init() {
-        console.log('[AI Bridge Registration] Initializing...');
+        sendLog.bind(null, 'INFO')('[AI Bridge Registration] Initializing...');
         sendLog('INFO', 'Initializing registration module...');
 
         // Proactively register to pool when page loads
@@ -117,7 +117,7 @@
 
                         if (isContextInvalidated) {
                             clearInterval(extensionReloadCheckInterval);
-                            console.log('[AI Bridge Registration] Extension context invalidated. Stopping checks.');
+                            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Extension context invalidated. Stopping checks.');
 
                             const statusText = document.getElementById('overlay-status-text');
                             if (statusText) statusText.textContent = '❌ Reload Required';
@@ -132,12 +132,12 @@
                         }
 
                         if (lastRuntimeAvailable) {
-                            console.log('[AI Bridge Registration] Extension is unavailable...');
+                            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Extension is unavailable...');
                             lastRuntimeAvailable = false;
                         }
                     } else {
                         if (!lastRuntimeAvailable) {
-                            console.log('[AI Bridge Registration] Extension reloaded - refreshing status');
+                            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Extension reloaded - refreshing status');
                             lastRuntimeAvailable = true;
                             Actions.checkExistingRegistration();
                             setTimeout(Actions.checkExistingRegistration, 1000);
@@ -147,7 +147,7 @@
             } catch (e) {
                 if (e.message.includes('Extension context invalidated')) {
                     clearInterval(extensionReloadCheckInterval);
-                    console.log('[AI Bridge Registration] Extension context invalidated (sync).');
+                    sendLog.bind(null, 'INFO')('[AI Bridge Registration] Extension context invalidated (sync).');
                     // Update UI to show error (simplified here)
                     const statusText = document.getElementById('overlay-status-text');
                     if (statusText) statusText.textContent = '❌ Reload Required';
@@ -161,13 +161,13 @@
 
     function setupMessageListener() {
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-            console.log('[AI Bridge Registration] Received message:', message.type);
+            sendLog.bind(null, 'INFO')('[AI Bridge Registration] Received message:', message.type);
 
             if (message.type === 'STATE_UPDATE') {
                 UI.updateActionStatusFromState(message.state);
                 return false;
             } else if (message.type === 'REGISTRATION_CONFIRMED') {
-                console.log('[AI Bridge Registration] Registration confirmed:', message);
+                sendLog.bind(null, 'INFO')('[AI Bridge Registration] Registration confirmed:', message);
                 sendLog('INFO', 'Registration confirmed: Session ' + message.sessionNum);
                 state.isRegistered = true;
                 state.sessionNum = message.sessionNum;
@@ -187,7 +187,7 @@
                 sendLog('INFO', 'UI updated after REGISTRATION_CONFIRMED');
                 return false;
             } else if (message.type === 'REGISTERED_TO_POOL') {
-                console.log('[AI Bridge Registration] Registered to pool');
+                sendLog.bind(null, 'INFO')('[AI Bridge Registration] Registered to pool');
                 sendLog('INFO', 'Registered to pool');
                 state.isRegistered = false;
                 state.sessionNum = null;
@@ -195,13 +195,13 @@
                 UI.updatePoolRegisteredUI();
                 return false;
             } else if (message.type === 'REMOVED_FROM_POOL') {
-                console.log('[AI Bridge Registration] Removed from pool');
+                sendLog.bind(null, 'INFO')('[AI Bridge Registration] Removed from pool');
                 sendLog('INFO', 'Removed from pool');
 
                 UI.updateUnregisteredUI();
                 return false;
             } else if (message.type === 'REMOVED_FROM_CONVERSATION') {
-                console.log('[AI Bridge Registration] Removed from conversation');
+                sendLog.bind(null, 'INFO')('[AI Bridge Registration] Removed from conversation');
                 sendLog('INFO', 'Removed from conversation');
                 state.isRegistered = false;
                 state.sessionNum = null;

@@ -1,4 +1,21 @@
 // AI Chat Bridge - Side Panel Script
+function log(level, ...args) {
+  const message = args.map(arg => 
+    typeof arg === "object" ? JSON.stringify(arg) : String(arg)
+  ).join(" ");
+  chrome.runtime.sendMessage({
+      type: "ADD_LOG",
+      entry: {
+          timestamp: new Date().toISOString(),
+          level: level,
+          source: "SidePanel",
+          message: message
+      }
+  }).catch(() => {});
+}
+function spLog(...args) { log("INFO", ...args); }
+function spWarn(...args) { log("WARN", ...args); }
+function spError(...args) { log("ERROR", ...args); }
 
 // DOM Elements
 const elements = {
@@ -99,7 +116,7 @@ let statePollingInterval = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('[Side Panel] Initializing...');
+  spLog('[Side Panel] Initializing...');
   initializeUI();
   loadTheme();
   loadState();
@@ -149,7 +166,7 @@ async function loadStateOnly() {
     // Also refresh available agents periodically
     loadAvailableAgents();
   } catch (error) {
-    console.error('[Side Panel] Failed to load state:', error);
+    spError('[Side Panel] Failed to load state:', error);
   }
 }
 
@@ -173,7 +190,7 @@ async function loadConfigOnce() {
       elements.contextMessages.value = configData.config.contextMessages || 4;
     }
   } catch (error) {
-    console.error('[Side Panel] Failed to load config:', error);
+    spError('[Side Panel] Failed to load config:', error);
   }
 }
 
@@ -303,7 +320,7 @@ function setupEventListeners() {
           loadAvailableAgents();
         }, 1000);
       } catch (error) {
-        console.error('[Side Panel] Refresh error:', error);
+        spError('[Side Panel] Refresh error:', error);
         showToast('❌ Failed to refresh', 'error');
       }
     });
@@ -311,7 +328,7 @@ function setupEventListeners() {
 
   // Listen for updates from background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('[Side Panel] Received message:', message.type);
+    spLog('[Side Panel] Received message:', message.type);
 
     switch (message.type) {
       case 'STATE_UPDATE':
@@ -345,7 +362,7 @@ function loadTheme() {
       document.body.classList.remove('dark-theme');
     }
   } catch (error) {
-    console.error('[Side Panel] Failed to load theme:', error);
+    spError('[Side Panel] Failed to load theme:', error);
   }
 }
 
@@ -357,13 +374,13 @@ function toggleTheme() {
     localStorage.setItem('ai-bridge-theme', theme);
     showToast(isDark ? '🌙 Dark theme enabled' : '☀️ Light theme enabled', 'success');
   } catch (error) {
-    console.error('[Side Panel] Failed to save theme:', error);
+    spError('[Side Panel] Failed to save theme:', error);
   }
 }
 
 // Tab switching function
 function switchTab(tabName) {
-  console.log('[Side Panel] Switching to tab:', tabName);
+  spLog('[Side Panel] Switching to tab:', tabName);
 
   // Update tab icons
   document.querySelectorAll('.tab-icon').forEach(tab => {
@@ -372,9 +389,9 @@ function switchTab(tabName) {
   const activeTab = document.querySelector(`.tab-icon[data-tab="${tabName}"]`);
   if (activeTab) {
     activeTab.classList.add('active');
-    console.log('[Side Panel] Tab icon activated:', tabName);
+    spLog('[Side Panel] Tab icon activated:', tabName);
   } else {
-    console.error('[Side Panel] Tab icon not found:', tabName);
+    spError('[Side Panel] Tab icon not found:', tabName);
   }
 
   // Update tab pages - hide all first
@@ -386,9 +403,9 @@ function switchTab(tabName) {
   const activePage = document.getElementById(`${tabName}-tab-page`);
   if (activePage) {
     activePage.classList.add('active');
-    console.log('[Side Panel] Tab page activated:', tabName);
+    spLog('[Side Panel] Tab page activated:', tabName);
   } else {
-    console.error('[Side Panel] Tab page not found:', `${tabName}-tab-page`);
+    spError('[Side Panel] Tab page not found:', `${tabName}-tab-page`);
   }
 
   // Auto-refresh debug logs when opening debug tab
@@ -627,7 +644,7 @@ async function saveConfiguration() {
     contextMessages: parseInt(elements.contextMessages.value) || 4
   };
 
-  console.log('[Side Panel] Saving config:', config);
+  spLog('[Side Panel] Saving config:', config);
 
   try {
     const result = await chrome.runtime.sendMessage({
@@ -635,11 +652,11 @@ async function saveConfiguration() {
       config: config
     });
 
-    console.log('[Side Panel] Config saved:', result);
+    spLog('[Side Panel] Config saved:', result);
     configModified = false; // Reset flag after successful save
     showToast('✅ Config saved!', 'success');
   } catch (error) {
-    console.error('[Side Panel] Failed to save config:', error);
+    spError('[Side Panel] Failed to save config:', error);
     showToast('❌ Failed to save', 'error');
   }
 }
@@ -679,7 +696,7 @@ async function startConversation() {
       showToast('❌ ' + (response.error || 'Failed to start'), 'error');
     }
   } catch (error) {
-    console.error('[Side Panel] Failed to start:', error);
+    spError('[Side Panel] Failed to start:', error);
     showToast('❌ Failed to start', 'error');
   }
 
@@ -706,7 +723,7 @@ async function stopConversation() {
 
     showToast('⏹️ Conversation stopped', 'success');
   } catch (error) {
-    console.error('[Side Panel] Failed to stop:', error);
+    spError('[Side Panel] Failed to stop:', error);
     showToast('❌ Failed to stop', 'error');
   }
 }
@@ -719,7 +736,7 @@ async function clearHistory() {
     lastRenderedCount = 0; // Reset render counter
     showToast('🗑️ History cleared', 'success');
   } catch (error) {
-    console.error('[Side Panel] Failed to clear:', error);
+    spError('[Side Panel] Failed to clear:', error);
     showToast('❌ Failed to clear', 'error');
   }
 }
@@ -831,7 +848,7 @@ async function checkServiceWorkerStatus() {
     });
     return { available: true, response };
   } catch (error) {
-    console.warn('[Side Panel] Service worker not responding:', error.message);
+    spWarn('[Side Panel] Service worker not responding:', error.message);
     return { available: false, error: error.message };
   }
 }
@@ -884,11 +901,11 @@ const testLogBtn = document.getElementById('test-log');
 if (testLogBtn) {
   testLogBtn.addEventListener('click', async () => {
     try {
-      console.log('[Side Panel] Creating test log...');
+      spLog('[Side Panel] Creating test log...');
 
       // Check if extension is available
       if (!chrome.runtime || !chrome.runtime.id) {
-        console.error('[Side Panel] Extension runtime not available');
+        spError('[Side Panel] Extension runtime not available');
         showToast('❌ Extension runtime not available', 'error');
         return;
       }
@@ -905,7 +922,7 @@ if (testLogBtn) {
           }
         }, (response) => {
           if (chrome.runtime.lastError) {
-            console.error('[Side Panel] ADD_LOG error:', chrome.runtime.lastError.message);
+            spError('[Side Panel] ADD_LOG error:', chrome.runtime.lastError.message);
             reject(new Error(chrome.runtime.lastError.message));
             return;
           }
@@ -913,15 +930,15 @@ if (testLogBtn) {
         });
       });
 
-      console.log('[Side Panel] ADD_LOG response:', response);
-      console.log('[Side Panel] Test log created, refreshing...');
+      spLog('[Side Panel] ADD_LOG response:', response);
+      spLog('[Side Panel] Test log created, refreshing...');
       showToast('🧪 Test log created', 'success');
       // Wait a bit for log to be saved, then refresh
       setTimeout(() => {
         refreshLogs();
       }, 500);
     } catch (error) {
-      console.error('[Side Panel] Failed to create test log:', error);
+      spError('[Side Panel] Failed to create test log:', error);
       showToast('❌ Failed to create test log: ' + error.message, 'error');
     }
   });
@@ -929,11 +946,11 @@ if (testLogBtn) {
 
 async function refreshLogs() {
   try {
-    console.log('[Side Panel] Refresh logs requested');
+    spLog('[Side Panel] Refresh logs requested');
 
     // Check if extension is available
     if (!chrome.runtime || !chrome.runtime.id) {
-      console.error('[Side Panel] Extension runtime not available');
+      spError('[Side Panel] Extension runtime not available');
       debugElements.logContainer.innerHTML = `
         <div class="empty-state">
           <p>❌ Extension runtime not available</p>
@@ -946,7 +963,7 @@ async function refreshLogs() {
     // Check service worker status
     const swStatus = await checkServiceWorkerStatus();
     if (!swStatus.available) {
-      console.error('[Side Panel] Service worker not available:', swStatus.error);
+      spError('[Side Panel] Service worker not available:', swStatus.error);
       debugElements.logContainer.innerHTML = `
         <div class="empty-state">
           <p>❌ Service worker not responding</p>
@@ -959,12 +976,12 @@ async function refreshLogs() {
       debugElements.logCount.textContent = '0 logs';
       return;
     }
-    console.log('[Side Panel] Service worker is available');
+    spLog('[Side Panel] Service worker is available');
 
     const response = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ type: 'GET_LOGS' }, (response) => {
         if (chrome.runtime.lastError) {
-          console.error('[Side Panel] GET_LOGS error:', chrome.runtime.lastError.message);
+          spError('[Side Panel] GET_LOGS error:', chrome.runtime.lastError.message);
           reject(new Error(chrome.runtime.lastError.message));
           return;
         }
@@ -972,10 +989,10 @@ async function refreshLogs() {
       });
     });
 
-    console.log('[Side Panel] GET_LOGS response:', response);
+    spLog('[Side Panel] GET_LOGS response:', response);
 
     if (!response) {
-      console.error('[Side Panel] No response from GET_LOGS');
+      spError('[Side Panel] No response from GET_LOGS');
       debugElements.logContainer.innerHTML = `
         <div class="empty-state">
           <p>❌ No response from extension. Service worker may not be running.</p>
@@ -989,7 +1006,7 @@ async function refreshLogs() {
     }
 
     allLogs = response.logs || [];
-    console.log('[Side Panel] Logs received:', allLogs.length, 'entries');
+    spLog('[Side Panel] Logs received:', allLogs.length, 'entries');
 
     // Check storage usage
     let storageInfo = null;
@@ -1004,9 +1021,9 @@ async function refreshLogs() {
         });
       });
       storageInfo = storageResponse;
-      console.log('[Side Panel] Storage usage:', storageInfo);
+      spLog('[Side Panel] Storage usage:', storageInfo);
     } catch (e) {
-      console.warn('[Side Panel] Failed to get storage usage:', e);
+      spWarn('[Side Panel] Failed to get storage usage:', e);
     }
 
     // Render filtered logs
@@ -1014,7 +1031,7 @@ async function refreshLogs() {
 
     showToast(`🔄 Loaded ${allLogs.length} logs`, 'success');
   } catch (error) {
-    console.error('[Side Panel] Failed to load logs:', error);
+    spError('[Side Panel] Failed to load logs:', error);
     showToast('❌ Failed to load logs', 'error');
   }
 }
@@ -1076,11 +1093,11 @@ function renderFilteredLogs(storageInfo = null) {
 
 async function downloadLogs() {
   try {
-    console.log('[Side Panel] Download logs requested');
+    spLog('[Side Panel] Download logs requested');
 
     // Check if extension is available
     if (!chrome.runtime || !chrome.runtime.id) {
-      console.error('[Side Panel] Extension runtime not available');
+      spError('[Side Panel] Extension runtime not available');
       showToast('❌ Extension runtime not available', 'error');
       return;
     }
@@ -1099,7 +1116,7 @@ async function downloadLogs() {
       const response = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({ type: 'GET_LOGS' }, (response) => {
           if (chrome.runtime.lastError) {
-            console.error('[Side Panel] GET_LOGS error:', chrome.runtime.lastError.message);
+            spError('[Side Panel] GET_LOGS error:', chrome.runtime.lastError.message);
             reject(new Error(chrome.runtime.lastError.message));
             return;
           }
@@ -1108,7 +1125,7 @@ async function downloadLogs() {
       });
 
       if (!response) {
-        console.error('[Side Panel] No response from GET_LOGS');
+        spError('[Side Panel] No response from GET_LOGS');
         showToast('❌ No response from extension. Service worker may not be running.', 'error');
         return;
       }
@@ -1123,10 +1140,10 @@ async function downloadLogs() {
       }
     }
 
-    console.log('[Side Panel] Logs to download:', logsToDownload.length, 'entries');
+    spLog('[Side Panel] Logs to download:', logsToDownload.length, 'entries');
 
     if (logsToDownload.length === 0) {
-      console.warn('[Side Panel] No logs to download');
+      spWarn('[Side Panel] No logs to download');
       showToast(`⚠️ No ${currentFilter === 'ALL' ? '' : currentFilter + ' '}logs to download. Try clicking "Refresh" first.`, 'error');
       return;
     }
@@ -1136,7 +1153,7 @@ async function downloadLogs() {
       `[${log.timestamp}] [${log.level}] [${log.source}] ${log.message}`
     );
     const content = lines.join('\n');
-    console.log('[Side Panel] Formatted log content length:', content.length);
+    spLog('[Side Panel] Formatted log content length:', content.length);
 
     // Create download filename with filter info
     const filterSuffix = currentFilter === 'ALL' ? '' : `-${currentFilter}`;
@@ -1152,10 +1169,10 @@ async function downloadLogs() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    console.log('[Side Panel] Download completed:', filename);
+    spLog('[Side Panel] Download completed:', filename);
     showToast(`📥 Downloaded ${filename} (${logsToDownload.length} ${currentFilter === 'ALL' ? 'logs' : currentFilter + ' logs'})`, 'success');
   } catch (error) {
-    console.error('[Side Panel] Failed to download logs:', error);
+    spError('[Side Panel] Failed to download logs:', error);
     showToast('❌ Failed to download: ' + error.message, 'error');
   }
 }
@@ -1184,7 +1201,7 @@ async function clearLogs() {
     debugElements.logCount.textContent = '0 logs';
     showToast('🗑️ Logs cleared', 'success');
   } catch (error) {
-    console.error('[Side Panel] Failed to clear logs:', error);
+    spError('[Side Panel] Failed to clear logs:', error);
     showToast('❌ Failed to clear logs', 'error');
   }
 }
@@ -1210,7 +1227,7 @@ async function swapAgents() {
       showToast('❌ Failed to swap', 'error');
     }
   } catch (error) {
-    console.error('[Side Panel] Swap error:', error);
+    spError('[Side Panel] Swap error:', error);
     showToast('❌ Failed to swap agents', 'error');
   } finally {
     if (btn) btn.disabled = false;
@@ -1228,7 +1245,7 @@ async function loadAvailableAgents() {
       renderAvailableAgents(response.agents);
     }
   } catch (error) {
-    console.error('[Side Panel] Failed to load available agents:', error);
+    spError('[Side Panel] Failed to load available agents:', error);
   }
 }
 
@@ -1256,13 +1273,13 @@ function updateAgentSelectors() {
           updateSelector(selector, availResponse.agents, currentTabId, assignedTabIds);
         });
       } else {
-        console.error('[Side Panel] Failed to get available agents for selectors');
+        spError('[Side Panel] Failed to get available agents for selectors');
       }
     }).catch(error => {
-      console.error('[Side Panel] Error getting available agents:', error);
+      spError('[Side Panel] Error getting available agents:', error);
     });
   }).catch(error => {
-    console.error('[Side Panel] Error getting state:', error);
+    spError('[Side Panel] Error getting state:', error);
   });
 }
 
@@ -1355,7 +1372,7 @@ function renderAvailableAgents(agents) {
       if (e.target.closest('.btn-remove')) return;
 
       const tabId = parseInt(item.dataset.tabId);
-      console.log('[Side Panel] Clicked agent:', tabId);
+      spLog('[Side Panel] Clicked agent:', tabId);
 
       try {
         // Get current state to find an empty slot
@@ -1374,7 +1391,7 @@ function renderAvailableAgents(agents) {
 
         // 2. If no empty slot, add a new one
         if (targetPosition === -1) {
-          console.log('[Side Panel] No empty slot, creating new one...');
+          spLog('[Side Panel] No empty slot, creating new one...');
           const newPos = participants.length + 1;
           // Add empty participant first
           await chrome.runtime.sendMessage({
@@ -1387,11 +1404,11 @@ function renderAvailableAgents(agents) {
         }
 
         // 3. Assign agent to the slot
-        console.log('[Side Panel] Assigning agent', tabId, 'to position', targetPosition);
+        spLog('[Side Panel] Assigning agent', tabId, 'to position', targetPosition);
         assignAgentToSlot(tabId, targetPosition);
 
       } catch (error) {
-        console.error('[Side Panel] Failed to auto-assign agent:', error);
+        spError('[Side Panel] Failed to auto-assign agent:', error);
         showToast('❌ Failed to add agent', 'error');
       }
     });
@@ -1406,7 +1423,12 @@ function renderAvailableAgents(agents) {
   });
 }
 
+// Lock to prevent double-submission
+let isAssigning = false;
+
 async function assignAgentToSlot(tabId, position) {
+  if (isAssigning) return;
+
   if (!tabId) {
     // If tabId is empty, release the slot
     await releaseAgentFromSlot(position);
@@ -1414,6 +1436,7 @@ async function assignAgentToSlot(tabId, position) {
   }
 
   try {
+    isAssigning = true;
     const response = await chrome.runtime.sendMessage({
       type: 'ASSIGN_AGENT_TO_SLOT',
       tabId: parseInt(tabId),
@@ -1433,10 +1456,12 @@ async function assignAgentToSlot(tabId, position) {
       updateAgentSelectors();
     }
   } catch (error) {
-    console.error('[Side Panel] Assign error:', error);
+    spError('[Side Panel] Assign error:', error);
     showToast('❌ Failed to assign agent', 'error');
     // Reset selector
     updateAgentSelectors();
+  } finally {
+    isAssigning = false;
   }
 }
 
@@ -1456,7 +1481,7 @@ async function removeAgentFromPool(tabId) {
       showToast('❌ Failed to remove agent', 'error');
     }
   } catch (error) {
-    console.error('[Side Panel] Remove error:', error);
+    spError('[Side Panel] Remove error:', error);
     showToast('❌ Failed to remove agent', 'error');
   }
 }
@@ -1484,7 +1509,7 @@ async function releaseAgentFromSlot(position) {
       showToast('❌ Failed to release agent', 'error');
     }
   } catch (error) {
-    console.error('[Side Panel] Release error:', error);
+    spError('[Side Panel] Release error:', error);
     showToast('❌ Failed to release agent', 'error');
   }
 }

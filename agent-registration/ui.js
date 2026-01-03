@@ -12,11 +12,11 @@
     // ============================================
 
     function updateRegisteredUI(num, role = null) {
-        console.log('[AI Bridge Registration] updateRegisteredUI called for session:', num, 'role:', role);
+        sendLog.bind(null, 'INFO')('[AI Bridge Registration] updateRegisteredUI called for session:', num, 'role:', role);
 
         const overlay = document.getElementById('ai-bridge-overlay');
         if (!overlay) {
-            console.error('[AI Bridge Registration] Overlay not found!');
+            sendLog.bind(null, 'ERROR')('[AI Bridge Registration] Overlay not found!');
             return;
         }
 
@@ -47,7 +47,7 @@
         }
 
         overlay.classList.add('compact');
-        console.log('[AI Bridge Registration] updateRegisteredUI completed');
+        sendLog.bind(null, 'INFO')('[AI Bridge Registration] updateRegisteredUI completed');
     }
 
     function updatePoolRegisteredUI() {

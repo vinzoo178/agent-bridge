@@ -45,6 +45,7 @@
         "https://duck.ai/*"
       ],
       "js": [
+        "logger.js",
         "platforms/base-adapter.js",
         "platforms/gemini-adapter.js",
         "platforms/chatgpt-adapter.js",
