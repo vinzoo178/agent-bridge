@@ -1,0 +1,25 @@
+{
+  "name": "ai-chat-bridge-backend",
+  "version": "1.0.0",
+  "description": "Backend proxy server for AI Chat Bridge extension",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "websocket",
+    "proxy",
+    "ai-chat"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "cors": "^2.8.5",
+    "uuid": "^9.0.1"
+  }
+}
+

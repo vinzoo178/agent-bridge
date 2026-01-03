@@ -25,7 +25,10 @@ const elements = {
   messageCount: document.getElementById('message-count'),
   clearHistory: document.getElementById('clear-history'),
   autoScroll: document.getElementById('auto-scroll'),
-  turnIndicator: document.getElementById('turn-indicator')
+  turnIndicator: document.getElementById('turn-indicator'),
+  backendStatus: document.getElementById('backend-status'),
+  backendIndicator: document.getElementById('backend-indicator'),
+  backendLabel: document.getElementById('backend-label')
 };
 
 // Track selected template
@@ -108,6 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Poll for state updates (but not config)
   statePollingInterval = setInterval(loadStateOnly, 2000);
+  
+  // Load backend status
+  loadBackendStatus();
+  setInterval(loadBackendStatus, 3000); // Check every 3 seconds
 });
 
 function initializeUI() {
@@ -218,6 +225,18 @@ function setupEventListeners() {
   // Clear history
   elements.clearHistory.addEventListener('click', clearHistory);
   
+  // Auto-register button
+  const autoRegisterBtn = document.getElementById('auto-register-btn');
+  if (autoRegisterBtn) {
+    autoRegisterBtn.addEventListener('click', autoRegisterAgents);
+  }
+  
+  // Swap agents button
+  const swapAgentsBtn = document.getElementById('swap-agents-btn');
+  if (swapAgentsBtn) {
+    swapAgentsBtn.addEventListener('click', swapAgents);
+  }
+  
   // Listen for updates from background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Side Panel] Received message:', message.type);
@@ -234,9 +253,72 @@ function setupEventListeners() {
         renderConversationHistory([]);
         expandPanelsForSetup();
         break;
+      case 'BACKEND_STATUS_UPDATE':
+        updateBackendStatusUI(message.status);
+        break;
     }
     sendResponse({ received: true });
   });
+}
+
+// ============================================
+// BACKEND STATUS
+// ============================================
+
+async function loadBackendStatus() {
+  try {
+    // Try to get backend status from background
+    // Background will query backend client if available
+    const response = await chrome.runtime.sendMessage({ type: 'GET_BACKEND_STATUS' });
+    if (response && response.status) {
+      updateBackendStatusUI(response.status);
+    }
+  } catch (error) {
+    // If backend client not available, show disconnected
+    updateBackendStatusUI({ connected: false, status: 'disconnected' });
+  }
+}
+
+function updateBackendStatusUI(status) {
+  if (!elements.backendStatus) return;
+  
+  const { connected, status: statusText, extensionId, error } = status || {};
+  
+  // Remove all status classes
+  elements.backendStatus.classList.remove('connected', 'connecting', 'disconnected');
+  
+  if (connected) {
+    elements.backendStatus.classList.add('connected');
+    elements.backendLabel.textContent = 'Backend';
+    elements.backendStatus.title = `Backend Connected${extensionId ? ` (ID: ${extensionId.substring(0, 8)}...)` : ''}\nClick to refresh`;
+    elements.backendStatus.style.cursor = 'pointer';
+  } else if (statusText === 'connecting') {
+    elements.backendStatus.classList.add('connecting');
+    elements.backendLabel.textContent = 'Connecting...';
+    elements.backendStatus.title = 'Connecting to backend server...';
+    elements.backendStatus.style.cursor = 'wait';
+  } else {
+    elements.backendStatus.classList.add('disconnected');
+    elements.backendLabel.textContent = 'No Backend';
+    elements.backendStatus.title = (error || 'Backend server not connected. Start backend server at localhost:3000') + '\nClick to reconnect';
+    elements.backendStatus.style.cursor = 'pointer';
+  }
+  
+  // Add click handler to reconnect
+  elements.backendStatus.onclick = async () => {
+    if (statusText === 'connecting') return; // Don't allow click while connecting
+    
+    showToast('🔄 Reconnecting to backend...', 'success');
+    
+    // Trigger backend client initialization
+    try {
+      await chrome.runtime.sendMessage({ type: 'BACKEND_CONNECT' });
+      // Refresh status after a delay
+      setTimeout(loadBackendStatus, 1000);
+    } catch (error) {
+      showToast('❌ Failed to reconnect', 'error');
+    }
+  };
 }
 
 // Collapse panels when conversation is active
@@ -301,6 +383,12 @@ function updateUI(state) {
   
   elements.startBtn.disabled = !canStart;
   elements.stopBtn.disabled = !canStop;
+  
+  // Update swap button
+  const swapBtn = document.getElementById('swap-agents-btn');
+  if (swapBtn) {
+    swapBtn.disabled = !(state.session1.connected && state.session2.connected);
+  }
   
   // Update message count
   elements.messageCount.textContent = state.messageCount || 0;
@@ -522,6 +610,26 @@ function showToast(message, type = 'success') {
 // DEBUG LOGS FUNCTIONALITY
 // ============================================
 
+// Check service worker status
+async function checkServiceWorkerStatus() {
+  try {
+    // Try to ping the service worker
+    const response = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'PING' }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(response);
+      });
+    });
+    return { available: true, response };
+  } catch (error) {
+    console.warn('[Side Panel] Service worker not responding:', error.message);
+    return { available: false, error: error.message };
+  }
+}
+
 const debugElements = {
   debugPanel: document.getElementById('debug-panel'),
   debugToggle: document.getElementById('debug-toggle'),
@@ -555,17 +663,150 @@ if (debugElements.clearLogs) {
   debugElements.clearLogs.addEventListener('click', clearLogs);
 }
 
+// Test log button
+const testLogBtn = document.getElementById('test-log');
+if (testLogBtn) {
+  testLogBtn.addEventListener('click', async () => {
+    try {
+      console.log('[Side Panel] Creating test log...');
+      
+      // Check if extension is available
+      if (!chrome.runtime || !chrome.runtime.id) {
+        console.error('[Side Panel] Extension runtime not available');
+        showToast('❌ Extension runtime not available', 'error');
+        return;
+      }
+      
+      const testMessage = `Test log created at ${new Date().toISOString()}`;
+      const response = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          type: 'ADD_LOG',
+          entry: {
+            timestamp: new Date().toISOString(),
+            level: 'INFO',
+            source: 'SidePanel',
+            message: testMessage
+          }
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('[Side Panel] ADD_LOG error:', chrome.runtime.lastError.message);
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(response);
+        });
+      });
+      
+      console.log('[Side Panel] ADD_LOG response:', response);
+      console.log('[Side Panel] Test log created, refreshing...');
+      showToast('🧪 Test log created', 'success');
+      // Wait a bit for log to be saved, then refresh
+      setTimeout(() => {
+        refreshLogs();
+      }, 500);
+    } catch (error) {
+      console.error('[Side Panel] Failed to create test log:', error);
+      showToast('❌ Failed to create test log: ' + error.message, 'error');
+    }
+  });
+}
+
 async function refreshLogs() {
   try {
-    const response = await chrome.runtime.sendMessage({ type: 'GET_LOGS' });
-    const logs = response.logs || [];
+    console.log('[Side Panel] Refresh logs requested');
     
-    debugElements.logCount.textContent = `${logs.length} logs`;
-    
-    if (logs.length === 0) {
+    // Check if extension is available
+    if (!chrome.runtime || !chrome.runtime.id) {
+      console.error('[Side Panel] Extension runtime not available');
       debugElements.logContainer.innerHTML = `
         <div class="empty-state">
-          <p>No logs yet</p>
+          <p>❌ Extension runtime not available</p>
+        </div>
+      `;
+      debugElements.logCount.textContent = '0 logs';
+      return;
+    }
+    
+    // Check service worker status
+    const swStatus = await checkServiceWorkerStatus();
+    if (!swStatus.available) {
+      console.error('[Side Panel] Service worker not available:', swStatus.error);
+      debugElements.logContainer.innerHTML = `
+        <div class="empty-state">
+          <p>❌ Service worker not responding</p>
+          <p style="font-size: 0.9em; color: #888; margin-top: 0.5em;">
+            Error: ${swStatus.error}<br/>
+            Try: chrome://extensions → Reload extension
+          </p>
+        </div>
+      `;
+      debugElements.logCount.textContent = '0 logs';
+      return;
+    }
+    console.log('[Side Panel] Service worker is available');
+    
+    const response = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'GET_LOGS' }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('[Side Panel] GET_LOGS error:', chrome.runtime.lastError.message);
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(response);
+      });
+    });
+    
+    console.log('[Side Panel] GET_LOGS response:', response);
+    
+    if (!response) {
+      console.error('[Side Panel] No response from GET_LOGS');
+      debugElements.logContainer.innerHTML = `
+        <div class="empty-state">
+          <p>❌ No response from extension. Service worker may not be running.</p>
+          <p style="font-size: 0.9em; color: #888; margin-top: 0.5em;">
+            Try: chrome://extensions → Reload extension → Check Service Worker
+          </p>
+        </div>
+      `;
+      debugElements.logCount.textContent = '0 logs';
+      return;
+    }
+    
+    const logs = response.logs || [];
+    console.log('[Side Panel] Logs received:', logs.length, 'entries');
+    
+    // Check storage usage
+    let storageInfo = null;
+    try {
+      const storageResponse = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: 'GET_STORAGE_USAGE' }, (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(response);
+        });
+      });
+      storageInfo = storageResponse;
+      console.log('[Side Panel] Storage usage:', storageInfo);
+    } catch (e) {
+      console.warn('[Side Panel] Failed to get storage usage:', e);
+    }
+    
+    debugElements.logCount.textContent = `${logs.length} logs${storageInfo ? ` (${storageInfo.usagePercent}% storage)` : ''}`;
+    
+    if (logs.length === 0) {
+      let errorMsg = 'No logs yet. Service worker may not have started.';
+      if (storageInfo && parseFloat(storageInfo.usagePercent) > 90) {
+        errorMsg = 'Storage may be full. Try clicking "Clear" to free up space.';
+      }
+      debugElements.logContainer.innerHTML = `
+        <div class="empty-state">
+          <p>${errorMsg}</p>
+          <p style="font-size: 0.9em; color: #888; margin-top: 0.5em;">
+            ${storageInfo ? `Storage: ${storageInfo.usagePercent}% used (${(storageInfo.usage / 1024).toFixed(1)} KB / ${(storageInfo.quota / 1024).toFixed(1)} KB)` : ''}<br/>
+            Try reloading the extension or check the service worker console.
+          </p>
         </div>
       `;
       return;
@@ -601,11 +842,40 @@ async function refreshLogs() {
 
 async function downloadLogs() {
   try {
-    const response = await chrome.runtime.sendMessage({ type: 'GET_LOGS' });
+    console.log('[Side Panel] Download logs requested');
+    
+    // Check if extension is available
+    if (!chrome.runtime || !chrome.runtime.id) {
+      console.error('[Side Panel] Extension runtime not available');
+      showToast('❌ Extension runtime not available', 'error');
+      return;
+    }
+    
+    const response = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'GET_LOGS' }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('[Side Panel] GET_LOGS error:', chrome.runtime.lastError.message);
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(response);
+      });
+    });
+    
+    console.log('[Side Panel] GET_LOGS response:', response);
+    
+    if (!response) {
+      console.error('[Side Panel] No response from GET_LOGS');
+      showToast('❌ No response from extension. Service worker may not be running.', 'error');
+      return;
+    }
+    
     const logs = response.logs || [];
+    console.log('[Side Panel] Logs received:', logs.length, 'entries');
     
     if (logs.length === 0) {
-      showToast('⚠️ No logs to download', 'error');
+      console.warn('[Side Panel] No logs to download');
+      showToast('⚠️ No logs to download. Try clicking "Refresh" first.', 'error');
       return;
     }
     
@@ -614,6 +884,7 @@ async function downloadLogs() {
       `[${log.timestamp}] [${log.level}] [${log.source}] ${log.message}`
     );
     const content = lines.join('\n');
+    console.log('[Side Panel] Formatted log content length:', content.length);
     
     // Create download
     const filename = `ai-bridge-logs-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.log`;
@@ -628,10 +899,11 @@ async function downloadLogs() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     
-    showToast(`📥 Downloaded ${filename}`, 'success');
+    console.log('[Side Panel] Download completed:', filename);
+    showToast(`📥 Downloaded ${filename} (${logs.length} logs)`, 'success');
   } catch (error) {
     console.error('[Side Panel] Failed to download logs:', error);
-    showToast('❌ Failed to download', 'error');
+    showToast('❌ Failed to download: ' + error.message, 'error');
   }
 }
 
@@ -650,6 +922,64 @@ async function clearLogs() {
   } catch (error) {
     console.error('[Side Panel] Failed to clear logs:', error);
     showToast('❌ Failed to clear logs', 'error');
+  }
+}
+
+// ============================================
+// AUTO-REGISTER & SWAP AGENTS
+// ============================================
+
+async function autoRegisterAgents() {
+  const btn = document.getElementById('auto-register-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-icon">⏳</span> Registering...';
+  }
+  
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'AUTO_REGISTER_TABS' });
+    
+    if (response && response.success) {
+      showToast('✅ Auto-registration triggered!', 'success');
+      // Reload state after a delay
+      setTimeout(() => {
+        loadStateOnly();
+      }, 1000);
+    } else {
+      showToast('⚠️ ' + (response.error || 'Auto-registration failed'), 'error');
+    }
+  } catch (error) {
+    console.error('[Side Panel] Auto-register error:', error);
+    showToast('❌ Failed to auto-register', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<span class="btn-icon">🔄</span> Auto-Register';
+    }
+  }
+}
+
+async function swapAgents() {
+  const btn = document.getElementById('swap-agents-btn');
+  if (btn) btn.disabled = true;
+  
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'SWAP_AGENTS' });
+    
+    if (response && response.success) {
+      showToast('⇄ Agents swapped!', 'success');
+      // Reload state
+      setTimeout(() => {
+        loadStateOnly();
+      }, 500);
+    } else {
+      showToast('❌ Failed to swap', 'error');
+    }
+  } catch (error) {
+    console.error('[Side Panel] Swap error:', error);
+    showToast('❌ Failed to swap agents', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 

@@ -66,6 +66,7 @@
   let stableCount = 0;
   let lastPolledResponse = '';
   let isWaitingForResponse = false;
+  let currentRequestId = null; // Store requestId from backend
   const MAX_POLLS = 90;
   const STABLE_THRESHOLD = 2;
   
@@ -124,10 +125,20 @@
     
     // Listen for messages from background
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      // Don't intercept CHECK_TAB_REGISTRATION - let it go to background
+      if (message.type === 'CHECK_TAB_REGISTRATION') {
+        return false; // Let background handle it
+      }
+      
       log('Received message:', message.type);
       
       switch (message.type) {
         case 'SEND_MESSAGE':
+          // Store requestId if provided (from backend)
+          if (message.requestId) {
+            currentRequestId = message.requestId;
+            log('Stored requestId:', currentRequestId);
+          }
           sendMessageToChat(message.text).then(success => {
             sendResponse({ success });
           });
@@ -543,11 +554,20 @@
     updateStatus('📨 Sending to bridge...');
     
     try {
-      const result = await chrome.runtime.sendMessage({
+      const messageToBackground = {
         type: 'AI_RESPONSE_RECEIVED',
         response: text,
         sessionNum: state.sessionNum
-      });
+      };
+      
+      // Include requestId if available (from backend)
+      if (currentRequestId) {
+        messageToBackground.requestId = currentRequestId;
+        log('Including requestId in response:', currentRequestId);
+        currentRequestId = null; // Clear after use
+      }
+      
+      const result = await chrome.runtime.sendMessage(messageToBackground);
       
       log('✅ Report result:', JSON.stringify(result));
       updateStatus('✅ Sent to Agent ' + (state.sessionNum === 1 ? 'B' : 'A'));

@@ -14,9 +14,15 @@
         <span class="logo-icon">🤖</span>
         <h1>AI Chat Bridge</h1>
       </div>
-      <div class="status-badge" id="global-status">
-        <span class="status-indicator"></span>
-        <span class="status-label">Inactive</span>
+      <div class="header-status">
+        <div class="status-badge" id="global-status">
+          <span class="status-indicator"></span>
+          <span class="status-label">Inactive</span>
+        </div>
+        <div class="status-badge backend-status" id="backend-status" title="Backend Connection Status">
+          <span class="status-indicator" id="backend-indicator"></span>
+          <span class="status-label" id="backend-label">Backend</span>
+        </div>
       </div>
     </header>
 
@@ -54,8 +60,19 @@
         </div>
       </div>
       
+      <div class="session-controls">
+        <button class="btn btn-secondary btn-sm" id="auto-register-btn">
+          <span class="btn-icon">🔄</span>
+          Auto-Register
+        </button>
+        <button class="btn btn-secondary btn-sm" id="swap-agents-btn" disabled>
+          <span class="btn-icon">⇄</span>
+          Swap Agents
+        </button>
+      </div>
+      
       <p class="help-text">
-        💡 Open Gemini or ChatGPT in two tabs, then click overlay buttons to register as Agent A/B
+        💡 Extension will auto-register when you open 2 chat tabs. Or click "Auto-Register" to register manually.
       </p>
     </section>
 
@@ -194,6 +211,9 @@
           </button>
           <button class="btn btn-secondary btn-sm" id="download-logs">
             📥 Download Logs
+          </button>
+          <button class="btn btn-secondary btn-sm" id="test-log">
+            🧪 Test Log
           </button>
           <button class="btn btn-ghost btn-sm" id="clear-logs">
             🗑️ Clear
