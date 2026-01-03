@@ -561,8 +561,9 @@ async function handleMessage(message, sender) {
       ]);
       return {
         memory: {
-          session1: state.session1,
-          session2: state.session2
+          session1: state.participants.length > 0 && state.participants[0] ? state.participants[0] : null,
+          session2: state.participants.length > 1 && state.participants[1] ? state.participants[1] : null,
+          participants: state.participants
         },
         storage: storageCheck
       };
@@ -724,7 +725,7 @@ async function addParticipant(tabId, platform, order = null) {
   }
 
   // Check if already a participant
-  const existingIndex = state.participants.findIndex(p => p.tabId === tabId);
+  const existingIndex = state.participants.findIndex(p => p && p.tabId === tabId);
   if (existingIndex >= 0) {
     // Update existing participant
     state.participants[existingIndex].platform = platform;
@@ -771,9 +772,9 @@ async function addParticipant(tabId, platform, order = null) {
     try {
       await chrome.tabs.sendMessage(tabId, {
         type: 'REGISTRATION_CONFIRMED',
-        sessionNum: state.participants.findIndex(p => p.tabId === tabId) + 1,
+        sessionNum: state.participants.findIndex(p => p && p.tabId === tabId) + 1,
         platform: platform,
-        order: state.participants.findIndex(p => p.tabId === tabId) + 1
+        order: state.participants.findIndex(p => p && p.tabId === tabId) + 1
       });
       bgLog('REGISTRATION_CONFIRMED sent successfully to tab:', tabId);
       break;
@@ -788,7 +789,7 @@ async function addParticipant(tabId, platform, order = null) {
     }
   }
 
-  return { success: true, participant: state.participants.find(p => p.tabId === tabId) };
+  return { success: true, participant: state.participants.find(p => p && p.tabId === tabId) };
 }
 
 // Legacy function for backward compatibility
@@ -862,7 +863,7 @@ async function registerToPool(tabId, platform) {
 // Get list of available agents
 function getAvailableAgents() {
   // Filter out agents that are already assigned to participants
-  const assignedTabIds = state.participants.map(p => p.tabId).filter(Boolean);
+  const assignedTabIds = state.participants.filter(p => p).map(p => p.tabId).filter(Boolean);
   const available = state.availableAgents.filter(agent => !assignedTabIds.includes(agent.tabId));
 
   return {
@@ -881,7 +882,7 @@ async function assignAgentToSlot(tabId, position) {
   const agent = state.availableAgents.find(a => a.tabId === tabId);
   if (!agent) {
     // Check if already assigned (idempotent)
-    const existing = state.participants.find(p => p.tabId === tabId);
+    const existing = state.participants.find(p => p && p.tabId === tabId);
     if (existing) {
       bgLog('Agent already assigned to participant:', existing.role);
       return { success: true, participant: existing, alreadyAssigned: true };
@@ -1089,7 +1090,7 @@ async function handleAIResponse(response, sessionNum, requestId) {
 
   // Find which participant this is (sessionNum is 1-based from legacy, or order from new system)
   const participantIndex = state.participants.findIndex(p =>
-    (p.order === sessionNum) || (state.participants.indexOf(p) + 1 === sessionNum)
+    p && ((p.order === sessionNum) || (state.participants.indexOf(p) + 1 === sessionNum))
   );
 
   if (participantIndex === -1) {
@@ -1218,14 +1219,14 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
 
 async function startConversation(initialPrompt) {
   // Count participants with tabId (actual agents assigned)
-  const validParticipants = state.participants.filter(p => p.tabId);
+  const validParticipants = state.participants.filter(p => p && p.tabId);
 
   if (validParticipants.length < 2) {
     return { success: false, error: 'At least 2 participants with agents must be assigned' };
   }
 
   // Find first participant with tabId
-  let firstParticipantIndex = state.participants.findIndex(p => p.tabId);
+  let firstParticipantIndex = state.participants.findIndex(p => p && p.tabId);
   if (firstParticipantIndex === -1) {
     return { success: false, error: 'No participants with agents assigned' };
   }
@@ -1270,6 +1271,12 @@ async function sendMessageToParticipant(participantIndex, text, requestId = null
   }
 
   const participant = state.participants[participantIndex];
+  
+  // Check if participant exists
+  if (!participant) {
+    bgError(`Participant at index ${participantIndex} is null/undefined`);
+    return { success: false, error: `Participant ${participantIndex + 1} not found` };
+  }
 
   if (!participant.tabId) {
     bgError(`Participant ${participantIndex + 1} not registered (no tabId)`);
@@ -1326,16 +1333,16 @@ async function sendMessageToParticipant(participantIndex, text, requestId = null
 function getState() {
   return {
     isActive: state.isActive,
-    session1: {
-      connected: !!state.session1.tabId,
-      platform: state.session1.platform,
-      role: state.session1.role
-    },
-    session2: {
-      connected: !!state.session2.tabId,
-      platform: state.session2.platform,
-      role: state.session2.role
-    },
+    session1: state.participants.length > 0 && state.participants[0] ? {
+      connected: !!state.participants[0].tabId,
+      platform: state.participants[0].platform,
+      role: state.participants[0].role
+    } : { connected: false, platform: null, role: null },
+    session2: state.participants.length > 1 && state.participants[1] ? {
+      connected: !!state.participants[1].tabId,
+      platform: state.participants[1].platform,
+      role: state.participants[1].role
+    } : { connected: false, platform: null, role: null },
     currentTurn: state.currentTurn,
     config: state.config,
     messageCount: state.conversationHistory.length
@@ -1431,7 +1438,8 @@ async function getAvailableSession() {
 
   for (let i = 0; i < state.participants.length; i++) {
     const participant = state.participants[i];
-    if (participant.tabId) {
+    // Check if participant exists and has a tabId
+    if (participant && participant.tabId) {
       try {
         // Verify tab exists
         const tab = await chrome.tabs.get(participant.tabId);
@@ -1468,7 +1476,8 @@ async function getAvailableSession() {
       // Try again after restore
       for (let i = 0; i < state.participants.length; i++) {
         const participant = state.participants[i];
-        if (participant.tabId) {
+        // Check if participant exists and has a tabId
+        if (participant && participant.tabId) {
           try {
             const tab = await chrome.tabs.get(participant.tabId);
             if (tab) {
@@ -1494,16 +1503,16 @@ async function getAvailableSession() {
 
   return {
     available: false,
-    session1: {
-      hasTabId: !!state.session1.tabId,
-      tabId: state.session1.tabId,
-      platform: state.session1.platform
-    },
-    session2: {
-      hasTabId: !!state.session2.tabId,
-      tabId: state.session2.tabId,
-      platform: state.session2.platform
-    }
+    session1: state.participants.length > 0 && state.participants[0] ? {
+      hasTabId: !!state.participants[0].tabId,
+      tabId: state.participants[0].tabId,
+      platform: state.participants[0].platform
+    } : { hasTabId: false, tabId: null, platform: null },
+    session2: state.participants.length > 1 && state.participants[1] ? {
+      hasTabId: !!state.participants[1].tabId,
+      tabId: state.participants[1].tabId,
+      platform: state.participants[1].platform
+    } : { hasTabId: false, tabId: null, platform: null }
   };
 }
 
@@ -1586,9 +1595,14 @@ async function checkTabRegistration(tabId) {
   const checkTabId = Number(tabId);
 
   // Check if in participants array
-  const participantIndex = state.participants.findIndex(p => Number(p.tabId) === checkTabId);
+  const participantIndex = state.participants.findIndex(p => p && p.tabId && Number(p.tabId) === checkTabId);
   if (participantIndex >= 0) {
     const participant = state.participants[participantIndex];
+    // Additional safety check
+    if (!participant) {
+      bgLog('Participant at index', participantIndex, 'is null/undefined');
+      return { isRegistered: false };
+    }
     bgLog('MATCH: Tab is Participant', participantIndex + 1, '(', participant.role, ')');
     const result = {
       isRegistered: true,
@@ -1679,18 +1693,14 @@ function broadcastStateUpdate() {
   }).catch(() => { });
 
   // Send to content scripts
-  if (state.session1.tabId) {
-    chrome.tabs.sendMessage(state.session1.tabId, {
-      type: 'STATE_UPDATE',
-      state: stateUpdate
-    }).catch(() => { });
-  }
-  if (state.session2.tabId) {
-    chrome.tabs.sendMessage(state.session2.tabId, {
-      type: 'STATE_UPDATE',
-      state: stateUpdate
-    }).catch(() => { });
-  }
+  state.participants.forEach((p, idx) => {
+    if (p && p.tabId) {
+      chrome.tabs.sendMessage(p.tabId, {
+        type: 'STATE_UPDATE',
+        state: stateUpdate
+      }).catch(() => { });
+    }
+  });
 }
 
 function broadcastConversationUpdate(entry, cleared = false) {
@@ -1712,7 +1722,7 @@ function broadcastConversationUpdate(entry, cleared = false) {
 // Handle tab close - remove participant and remove from pool
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   // Check if in participants
-  const participantIndex = state.participants.findIndex(p => p.tabId === tabId);
+  const participantIndex = state.participants.findIndex(p => p && p.tabId === tabId);
   if (participantIndex >= 0) {
     await removeParticipant(participantIndex + 1); // 1-based position
   }
@@ -1911,7 +1921,7 @@ async function autoRegisterChatTabs() {
     }
 
     // Register all chat tabs to pool (if not already registered or assigned)
-    const assignedTabIds = state.participants.map(p => p.tabId).filter(Boolean);
+    const assignedTabIds = state.participants.filter(p => p).map(p => p.tabId).filter(Boolean);
     const poolTabIds = state.availableAgents.map(a => a.tabId);
 
     for (const tab of chatTabs) {
