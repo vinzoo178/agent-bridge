@@ -1653,6 +1653,29 @@ async function clearHistory() {
   state.conversationHistory = [];
   await chrome.storage.local.set({ conversationHistory: [] });
 
+  // Reload and redirect participant tabs to root URLs
+  for (const participant of state.participants) {
+    if (participant && participant.tabId) {
+      try {
+        const tab = await chrome.tabs.get(participant.tabId);
+        if (tab && tab.url) {
+          const rootUrl = getRootUrlForPlatform(tab.url);
+          if (rootUrl) {
+            bgLog('Redirecting tab', participant.tabId, 'from', tab.url, 'to', rootUrl);
+            await chrome.tabs.update(participant.tabId, { url: rootUrl });
+          } else {
+            // If we can't determine root URL, just reload
+            bgLog('Reloading tab', participant.tabId, '(could not determine root URL)');
+            await chrome.tabs.reload(participant.tabId);
+          }
+        }
+      } catch (error) {
+        bgLog('Error reloading/redirecting tab', participant.tabId, ':', error.message);
+        // Tab might be closed, continue with other tabs
+      }
+    }
+  }
+
   broadcastConversationUpdate(null, true);
   return { success: true };
 }
@@ -1892,6 +1915,45 @@ function detectPlatformFromUrl(url) {
     if (hostname.includes('chatgpt') || hostname.includes('openai')) return 'chatgpt';
     if (hostname.includes('deepseek')) return 'deepseek';
     if (hostname.includes('duckduckgo')) return 'duckduckgo';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Get root URL for a platform based on current URL
+function getRootUrlForPlatform(url) {
+  if (!url) return null;
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+    
+    // Gemini: https://gemini.google.com/
+    if (hostname.includes('gemini')) {
+      return 'https://gemini.google.com/';
+    }
+    
+    // ChatGPT: https://chatgpt.com/ or https://chat.openai.com/
+    if (hostname.includes('chatgpt.com')) {
+      return 'https://chatgpt.com/';
+    }
+    if (hostname.includes('openai.com')) {
+      return 'https://chat.openai.com/';
+    }
+    
+    // DeepSeek: https://chat.deepseek.com/
+    if (hostname.includes('deepseek')) {
+      return 'https://chat.deepseek.com/';
+    }
+    
+    // DuckDuckGo: https://duckduckgo.com/?ia=chat or https://duck.ai/
+    if (hostname.includes('duck.ai')) {
+      return 'https://duck.ai/';
+    }
+    if (hostname.includes('duckduckgo.com')) {
+      return 'https://duckduckgo.com/?ia=chat';
+    }
+    
     return null;
   } catch {
     return null;
