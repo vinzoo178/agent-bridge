@@ -24,7 +24,8 @@ const state = {
     maxTurns: 50, // Maximum conversation turns
     contextMessages: 4, // Number of recent messages to include as context
     initialPrompt: '',
-    templateType: null // Template type: 'debate', 'story', 'qa', 'brainstorm', or null
+    templateType: null, // Template type: 'debate', 'story', 'qa', 'brainstorm', or null
+    activateTabs: true // Automatically activate tabs before sending messages (helps with inactive tabs)
   }
 };
 
@@ -1416,6 +1417,36 @@ async function stopConversation() {
   return { success: true };
 }
 
+// Activate a tab before sending messages (helps with inactive tabs that can't receive messages)
+// Chrome can activate tabs, which will also bring the window to front
+async function activateTabIfNeeded(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    
+    // Only activate if tab is not already active
+    if (!tab.active) {
+      bgLog(`Activating tab ${tabId} (currently inactive)`);
+      try {
+        // Activate the tab - this will also bring the window to front
+        await chrome.tabs.update(tabId, { active: true });
+        // Wait a bit for the tab to become active
+        await new Promise(resolve => setTimeout(resolve, 100));
+        bgLog(`Tab ${tabId} activated successfully`);
+      } catch (activateError) {
+        // Some tabs might not be activatable (e.g., in certain contexts)
+        // Log but don't fail - we'll still try to send the message
+        bgWarn(`Could not activate tab ${tabId}:`, activateError.message);
+      }
+    } else {
+      bgLog(`Tab ${tabId} is already active`);
+    }
+  } catch (error) {
+    // Tab might not exist or be accessible
+    bgWarn(`Could not check/activate tab ${tabId}:`, error.message);
+    // Don't throw - we'll still try to send the message
+  }
+}
+
 // Send message to a participant by index (0-based)
 async function sendMessageToParticipant(participantIndex, text, requestId = null) {
   if (participantIndex < 0 || participantIndex >= state.participants.length) {
@@ -1447,7 +1478,12 @@ async function sendMessageToParticipant(participantIndex, text, requestId = null
         await saveParticipantsToStorage();
         return { success: false, error: `Participant ${participantIndex + 1} tab was closed` };
       }
-      bgLog(`Participant ${participantIndex + 1} tab verified:`, tab.url);
+      bgLog(`Participant ${participantIndex + 1} tab verified:`, tab.url, 'active:', tab.active);
+      
+      // Activate tab if needed (helps with inactive tabs that can't receive messages)
+      if (state.config.activateTabs !== false) {
+        await activateTabIfNeeded(participant.tabId);
+      }
     } catch (tabError) {
       bgError(`Participant ${participantIndex + 1} tab error:`, tabError.message);
       // Tab was closed or doesn't exist
