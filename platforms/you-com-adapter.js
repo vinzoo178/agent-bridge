@@ -8,14 +8,13 @@ class YouComAdapter extends BasePlatformAdapter {
     this.hostPatterns = ['you.com', 'www.you.com'];
     
     // Selectors for You.com Chat
-    // Note: These may need to be updated based on actual DOM structure
     this.selectors = {
       input: [
+        '#search-input-textarea',
+        'textarea[placeholder*="How can I help"]',
         'textarea[placeholder*="Ask"]',
-        'textarea[placeholder*="Message"]',
-        'textarea[placeholder*="Search"]',
-        'div[contenteditable="true"]',
         'textarea',
+        'div[contenteditable="true"]',
       ],
       sendButton: [
         'button[aria-label*="Send"]',
@@ -23,6 +22,10 @@ class YouComAdapter extends BasePlatformAdapter {
         'button:has-text("Send")',
       ],
       responses: [
+        '[data-testid*="answer-turn"]',
+        '[data-testid*="youchat-answer"]',
+        '[data-testid*="answer"]',
+        '[data-testid="youchat-text"]',
         '[data-role="assistant"]',
         '[data-author="assistant"]',
         '.assistant-message',
@@ -30,6 +33,8 @@ class YouComAdapter extends BasePlatformAdapter {
         '[class*="assistant"]',
         '[class*="response"]',
         '[class*="you-message"]',
+        '[class*="Message"]',
+        '[class*="message"]',
       ],
       loading: [
         'button[aria-label*="Stop"]',
@@ -55,7 +60,57 @@ class YouComAdapter extends BasePlatformAdapter {
   }
   
   getResponses() {
-    return this.findAll(this.selectors.responses);
+    console.log('[YouComAdapter] getResponses called');
+    
+    // You.com uses data-testid for response containers
+    // Primary selector: [data-testid*="answer-turn"] for answer containers
+    const answerTurns = document.querySelectorAll('[data-testid*="answer-turn"]');
+    if (answerTurns.length > 0) {
+      console.log('[YouComAdapter] getResponses: Found', answerTurns.length, 'answer-turn elements');
+      return Array.from(answerTurns);
+    }
+    
+    // Fallback to youchat-text (contains the actual text)
+    const youchatTexts = document.querySelectorAll('[data-testid="youchat-text"]');
+    if (youchatTexts.length > 0) {
+      console.log('[YouComAdapter] getResponses: Found', youchatTexts.length, 'youchat-text elements');
+      // Return parent containers for youchat-text elements
+      const containers = Array.from(youchatTexts).map(el => {
+        // Try to find the answer container (parent with answer-turn data-testid)
+        let container = el.parentElement;
+        for (let i = 0; i < 5 && container; i++) {
+          const testId = container.getAttribute('data-testid');
+          if (testId && testId.includes('answer')) {
+            return container;
+          }
+          container = container.parentElement;
+        }
+        return el.parentElement || el;
+      });
+      return containers;
+    }
+    
+    // Fallback to standard selectors
+    const responses = this.findAll(this.selectors.responses);
+    console.log('[YouComAdapter] getResponses: Found', responses.length, 'responses with fallback selectors');
+    
+    return responses;
+  }
+  
+  getLatestResponse() {
+    const responses = this.getResponses();
+    console.log('[YouComAdapter] getLatestResponse: Found', responses.length, 'responses');
+    
+    if (responses.length === 0) {
+      console.log('[YouComAdapter] getLatestResponse: No responses found');
+      return null;
+    }
+    
+    const last = responses[responses.length - 1];
+    const text = (last.innerText || last.textContent || '').trim();
+    console.log('[YouComAdapter] getLatestResponse: Last response text length:', text.length, 'preview:', text.substring(0, 50));
+    
+    return text;
   }
   
   isGenerating() {
