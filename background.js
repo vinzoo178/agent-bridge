@@ -923,8 +923,12 @@ async function registerSession(sessionNum, tabId, platform) {
 
 // Save participants to storage
 async function saveParticipantsToStorage() {
+  // Filter out empty participants (no tabId) before saving
+  // We don't want to persist empty slots
+  const validParticipants = state.participants.filter(p => p && p.tabId && p.tabId !== null);
+  
   const storageData = {
-    participants: state.participants,
+    participants: validParticipants,
     currentTurn: state.currentTurn
   };
   await chrome.storage.local.set(storageData);
@@ -2035,6 +2039,7 @@ async function restoreStateFromStorage() {
     // Restore participants (new system)
     if (result.participants && Array.isArray(result.participants)) {
       // Verify tabs still exist and filter out invalid ones
+      // Also filter out empty participants (no tabId) - we don't want to restore empty slots
       const validParticipants = [];
       for (const participant of result.participants) {
         if (!participant) continue; // Skip nulls if any
@@ -2048,8 +2053,8 @@ async function restoreStateFromStorage() {
             // Don't add back to array, effectively removing it
           }
         } else {
-          // Empty slot (no tabId) - keep it
-          validParticipants.push(participant);
+          // Empty slot (no tabId) - skip it, we don't want to restore empty slots
+          bgLog('Skipping empty participant slot during restore');
         }
       }
       state.participants = validParticipants;

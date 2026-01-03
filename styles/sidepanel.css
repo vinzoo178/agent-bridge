@@ -504,14 +504,14 @@ body {
 .conversation-flow {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
 }
 
 .participant-card {
   background: var(--bg-card);
   border: 2px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 14px;
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
   transition: all 0.3s ease;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
@@ -606,9 +606,9 @@ body {
   justify-content: center;
   align-items: center;
   color: var(--accent-primary);
-  margin: 2px 0;
+  margin: 0;
   opacity: 0.5;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
 .flow-arrow-icon {
@@ -824,7 +824,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 6px 8px;
   background: var(--bg-secondary);
   border: 2px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -845,7 +845,7 @@ body {
 }
 
 .agent-icon {
-  font-size: 16px;
+  font-size: 14px;
   flex-shrink: 0;
 }
 
@@ -856,19 +856,21 @@ body {
 }
 
 .agent-title {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.2;
 }
 
 .agent-platform {
-  font-size: 9px;
+  font-size: 8px;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  line-height: 1.2;
 }
 
 .agent-actions {
@@ -1865,10 +1867,7 @@ body.conversation-focus-mode .chat-input-container {
   flex-shrink: 0;
 }
 
-/* Adjust .participant-card padding for simpler layout */
-.participant-card {
-  padding: 10px 14px;
-}
+/* Adjust .participant-card padding for simpler layout - already set above */
 
 /* Override btn-release to seem more compact and fit in the row */
 .btn-release.compact {

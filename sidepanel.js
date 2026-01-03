@@ -584,24 +584,25 @@ function renderParticipants(participants) {
   const container = document.getElementById('participants-container');
   if (!container) return;
 
-
-
   // Clear container
   container.innerHTML = '';
 
-  // Ensure we have at least 2 slots (fill with placeholders if needed)
-  const displayParticipants = [...participants];
-  while (displayParticipants.length < 2) {
-    displayParticipants.push({
-      tabId: null,
-      connected: false,
-      role: `Participant ${displayParticipants.length + 1}`,
-      order: displayParticipants.length + 1
-    });
+  // Filter out empty participants (those without tabId)
+  const validParticipants = participants.filter(p => p && p.tabId && p.tabId !== null);
+
+  // Only show participants that actually exist (no empty slots)
+  if (!validParticipants || validParticipants.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state" style="padding: 20px;">
+        <p style="color: var(--text-muted); font-size: 12px;">No agents added yet</p>
+        <p class="empty-hint">Select agents from the list below to add them to the conversation</p>
+      </div>
+    `;
+    return;
   }
 
-  // Render each participant (including empty/virtual slots)
-  displayParticipants.forEach((participant, index) => {
+  // Render each participant (only those with actual agents)
+  validParticipants.forEach((participant, index) => {
     const hasAgent = participant.tabId && participant.tabId !== null;
     const connected = participant.connected && hasAgent;
     const platform = participant.platform || null;
@@ -645,7 +646,7 @@ function renderParticipants(participants) {
     container.appendChild(card);
 
     // Add arrow between participants (except after last)
-    if (index < displayParticipants.length - 1) {
+    if (index < validParticipants.length - 1) {
       const arrow = document.createElement('div');
       arrow.className = 'flow-arrow';
       arrow.innerHTML = `
@@ -1920,35 +1921,15 @@ function renderAvailableAgents(agents) {
       spLog('[Side Panel] Clicked agent:', tabId);
 
       try {
-        // Get current state to find an empty slot
+        // Get current state to count existing participants
         const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
         const participants = state.participants || [];
-
-        let targetPosition = -1;
-
-        // 1. Look for first empty slot (no tabId)
-        for (let i = 0; i < participants.length; i++) {
-          if (!participants[i].tabId) {
-            targetPosition = participants[i].order || (i + 1);
-            break;
-          }
-        }
-
-        // 2. If no empty slot, add a new one
-        if (targetPosition === -1) {
-          spLog('[Side Panel] No empty slot, creating new one...');
-          const newPos = participants.length + 1;
-          // Add empty participant first
-          await chrome.runtime.sendMessage({
-            type: 'ADD_EMPTY_PARTICIPANT',
-            position: newPos
-          });
-          targetPosition = newPos;
-          // Wait a tiny bit for state update to propagate internally in background
-          await new Promise(r => setTimeout(r, 100));
-        }
-
-        // 3. Assign agent to the slot
+        
+        // Filter to only count participants with actual agents
+        const validParticipants = participants.filter(p => p && p.tabId && p.tabId !== null);
+        
+        // Add agent to the next position (no empty slots needed)
+        const targetPosition = validParticipants.length + 1;
         spLog('[Side Panel] Assigning agent', tabId, 'to position', targetPosition);
         assignAgentToSlot(tabId, targetPosition);
 
@@ -2040,16 +2021,11 @@ async function releaseAgentFromSlot(position) {
 
     if (response && response.success) {
       showToast(`✅ Participant ${position} released`, 'success');
-      // Reload state and agents
+      // Reload state and agents after a short delay to ensure storage is updated
       setTimeout(() => {
         loadStateOnly();
         loadAvailableAgents();
-      }, 500);
-      // Reload state and agents
-      setTimeout(() => {
-        loadStateOnly();
-        loadAvailableAgents();
-      }, 500);
+      }, 300);
     } else {
       showToast('❌ Failed to release agent', 'error');
     }
