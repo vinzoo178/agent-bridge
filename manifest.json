@@ -25,8 +25,12 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["backend-client.js"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "backend-client.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "content_scripts": [
@@ -47,10 +51,15 @@
         "platforms/deepseek-adapter.js",
         "platforms/duckduckgo-adapter.js",
         "platforms/index.js",
-        "agent-registration.js",
+        "agent-registration/state.js",
+        "agent-registration/ui.js",
+        "agent-registration/actions.js",
+        "agent-registration/main.js",
         "content.js"
       ],
-      "css": ["styles/overlay.css"],
+      "css": [
+        "styles/overlay.css"
+      ],
       "run_at": "document_idle"
     }
   ],

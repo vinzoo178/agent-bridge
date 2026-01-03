@@ -3,9 +3,10 @@
 
 const state = {
   isActive: false,
-  session1: { tabId: null, role: 'Agent A', platform: null },
-  session2: { tabId: null, role: 'Agent B', platform: null },
-  currentTurn: 1, // Which session should respond next
+  // Participants array - supports multiple agents (n agents)
+  // Each participant: { tabId, platform, title, order, role }
+  participants: [], // Array of participants in conversation order
+  currentTurn: 0, // Index in participants array (0-based)
   conversationHistory: [],
   // Available agents pool - tabs that have registered but not assigned to slots
   availableAgents: [], // Array of { tabId, platform, title, registeredAt }
@@ -45,7 +46,7 @@ async function loadLogsFromStorage(addStartupLog = false) {
     // Try to load from session storage first (faster, more recent)
     let loadedCount = 0;
     let loadedLogs = [];
-    
+
     // Load from session storage (if available)
     try {
       const sessionResult = await chrome.storage.session.get(['debugLogs']);
@@ -57,7 +58,7 @@ async function loadLogsFromStorage(addStartupLog = false) {
     } catch (e) {
       console.warn('[Background] Session storage not available:', e);
     }
-    
+
     // Step 2: If no session logs, try local storage (fallback - important logs only)
     // Local storage only has ERROR/WARN + last 50 logs, so it's a fallback
     if (loadedCount === 0) {
@@ -72,23 +73,43 @@ async function loadLogsFromStorage(addStartupLog = false) {
         console.warn('[Background] Failed to load from local storage:', e);
       }
     }
-    
-    // Only replace logs if we actually loaded something, or if this is the first load
-    if (loadedCount > 0 || !logsLoaded) {
-      debugLogs.length = 0;
-      if (loadedCount > 0) {
+
+    // Only replace logs if we actually loaded something from storage
+    // Don't clear memory logs if storage is empty - preserve what's in memory
+    if (loadedCount > 0) {
+      // Merge storage logs with memory logs (avoid duplicates by timestamp)
+      const existingTimestamps = new Set(debugLogs.map(log => log.timestamp));
+      const newLogs = loadedLogs.filter(log => !existingTimestamps.has(log.timestamp));
+
+      if (newLogs.length > 0) {
+        // Add new logs from storage to memory
+        debugLogs.push(...newLogs);
+        // Sort by timestamp
+        debugLogs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        // Trim if too many
+        if (debugLogs.length > MAX_LOGS) {
+          debugLogs.splice(0, debugLogs.length - MAX_LOGS);
+        }
+        console.log(`[Background] Merged ${newLogs.length} logs from storage, total: ${debugLogs.length}`);
+      } else if (!logsLoaded) {
+        // First load and storage has logs - replace memory (normal startup)
+        debugLogs.length = 0;
         debugLogs.push(...loadedLogs);
+        console.log(`[Background] Loaded ${loadedCount} logs from storage (first load)`);
       }
-      console.log(`[Background] Total logs loaded: ${debugLogs.length}`);
+      logsLoaded = true;
+    } else if (!logsLoaded) {
+      // First load but no logs in storage - just mark as loaded, keep memory as is
+      console.log(`[Background] No logs in storage, keeping memory logs (${debugLogs.length} logs)`);
       logsLoaded = true;
     }
-    
+
     // Only add startup log if explicitly requested (on actual startup)
     if (addStartupLog) {
       // Check storage usage
       const storageInfo = await checkStorageUsage();
-      
-      const storageMsg = storageInfo 
+
+      const storageMsg = storageInfo
         ? `Storage: ${storageInfo.usagePercent}% used`
         : 'Storage check failed';
       const startupEntry = {
@@ -98,34 +119,34 @@ async function loadLogsFromStorage(addStartupLog = false) {
         message: `Service worker started - ${loadedCount > 0 ? `loaded ${loadedCount} logs from storage` : 'no logs in storage, initializing'} - ${storageMsg}`
       };
       debugLogs.push(startupEntry);
-      
+
       // Save immediately (with error handling)
       try {
         const logsToSave = debugLogs.slice(-MAX_LOGS);
-        
+
         // Save to session storage
         try {
           await chrome.storage.session.set({ debugLogs: logsToSave });
         } catch (e) {
           console.warn('[Background] Session storage not available:', e);
         }
-        
+
         // Save to local storage: ERROR/WARN logs + last 50 logs (as per recommendation)
         const importantLogs = logsToSave
           .filter(log => log.level === 'ERROR' || log.level === 'WARN');
         const recentLogs = logsToSave.slice(-MAX_RECENT_LOGS);
-        
+
         // Combine and deduplicate by timestamp
         const allLogsForLocal = [...importantLogs, ...recentLogs];
         const uniqueLogs = Array.from(
           new Map(allLogsForLocal.map(log => [log.timestamp, log])).values()
         );
-        
+
         // Sort by timestamp and keep last MAX_LOCAL_LOGS
         const logsForLocal = uniqueLogs
           .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
           .slice(-MAX_LOCAL_LOGS);
-        
+
         try {
           await chrome.storage.local.set({ debugLogs: logsForLocal });
           console.log(`[Background] Added startup log, total logs: ${debugLogs.length}`);
@@ -136,7 +157,7 @@ async function loadLogsFromStorage(addStartupLog = false) {
         console.error('[Background] Failed to save startup log:', e);
       }
     }
-    
+
   } catch (e) {
     console.error('[Background] Failed to load logs from storage:', e);
     // Try to add error log even if storage failed
@@ -165,7 +186,7 @@ async function saveLogsToStorage() {
     try {
       // Trim logs before saving
       const logsToSave = debugLogs.slice(-MAX_LOGS);
-      
+
       // Step 1: Save to session storage (primary backup - fast, no quota, auto-cleanup)
       // This is the main backup that persists during the session
       try {
@@ -174,24 +195,24 @@ async function saveLogsToStorage() {
       } catch (e) {
         console.warn('[Background] Session storage not available:', e);
       }
-      
+
       // Step 2: Save to local storage (important logs only - persist across reload)
       // Strategy: ERROR/WARN logs + last 50 logs (as per docs/LOGGING_ANALYSIS.md)
       const importantLogs = logsToSave
         .filter(log => log.level === 'ERROR' || log.level === 'WARN');
       const recentLogs = logsToSave.slice(-MAX_RECENT_LOGS);
-      
+
       // Combine and deduplicate by timestamp
       const allLogsForLocal = [...importantLogs, ...recentLogs];
       const uniqueLogs = Array.from(
         new Map(allLogsForLocal.map(log => [log.timestamp, log])).values()
       );
-      
+
       // Sort by timestamp and keep last MAX_LOCAL_LOGS
       const logsForLocal = uniqueLogs
         .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
         .slice(-MAX_LOCAL_LOGS);
-      
+
       try {
         await chrome.storage.local.set({ debugLogs: logsForLocal });
         console.log(`[Background] ✓ Saved ${logsForLocal.length} important logs to local storage (${importantLogs.length} ERROR/WARN + ${recentLogs.length} recent)`);
@@ -224,7 +245,7 @@ async function checkStorageUsage() {
     const localUsage = await chrome.storage.local.getBytesInUse();
     const localQuota = chrome.storage.local.QUOTA_BYTES || 5242880; // 5MB default
     const localUsagePercent = (localUsage / localQuota * 100).toFixed(2);
-    
+
     // Check session storage (no quota, but check size anyway)
     let sessionUsage = 0;
     try {
@@ -232,9 +253,9 @@ async function checkStorageUsage() {
     } catch (e) {
       // Session storage might not be available
     }
-    
+
     console.log(`[Background] Storage usage - Local: ${localUsage} bytes / ${localQuota} bytes (${localUsagePercent}%), Session: ${sessionUsage} bytes`);
-    return { 
+    return {
       local: { usage: localUsage, quota: localQuota, usagePercent: localUsagePercent },
       session: { usage: sessionUsage },
       usage: localUsage,
@@ -255,6 +276,13 @@ loadLogsFromStorage(true).then(() => {
   console.error('[Background] Failed to initialize logs:', e);
 });
 
+// Always restore state from storage on startup to clean up stale tabs
+restoreStateFromStorage().then(() => {
+  console.log('[Background] State restored and validated on startup');
+}).catch(e => {
+  console.error('[Background] Failed to restore state:', e);
+});
+
 // Add log entry - Memory-first approach
 // Logs are immediately available in memory, then saved to storage (debounced)
 function addLog(source, level, message) {
@@ -264,18 +292,18 @@ function addLog(source, level, message) {
     source: source,
     message: message
   };
-  
+
   // Add to memory (primary storage - always available)
   debugLogs.push(entry);
-  
+
   // Trim if too many (keep last MAX_LOGS)
   if (debugLogs.length > MAX_LOGS) {
     debugLogs.splice(0, debugLogs.length - MAX_LOGS);
   }
-  
+
   // Save to storage (debounced - session storage + local storage for important logs)
   saveLogsToStorage();
-  
+
   // Also console log for immediate visibility
   const prefix = `[${source}]`;
   if (level === 'ERROR') {
@@ -304,7 +332,7 @@ async function initBackendClient() {
   try {
     // Create or get extension page for backend client
     const url = chrome.runtime.getURL('backend-page.html');
-    
+
     // Check if page already exists
     const tabs = await chrome.tabs.query({ url: url });
     if (tabs.length > 0) {
@@ -322,15 +350,15 @@ async function initBackendClient() {
       }
       return;
     }
-    
+
     // Create new page
     const tab = await chrome.tabs.create({
       url: url,
       active: false
     });
-    
+
     bgLog('Backend client page created, tab ID:', tab.id);
-    
+
     // Wait a bit for page to load, then verify
     setTimeout(async () => {
       try {
@@ -344,7 +372,7 @@ async function initBackendClient() {
         bgError('Error verifying backend client page:', e);
       }
     }, 2000);
-    
+
   } catch (error) {
     bgError('Failed to initialize backend client:', error);
     // Retry after delay
@@ -359,12 +387,12 @@ chrome.runtime.onInstalled.addListener(async () => {
     config: state.config,
     isActive: false
   });
-  
+
   // Load logs from storage
   await loadLogsFromStorage(true);
-  
+
   bgLog('AI Chat Bridge installed');
-  
+
   // Initialize backend client
   setTimeout(initBackendClient, 1000);
 });
@@ -373,7 +401,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 chrome.runtime.onStartup.addListener(async () => {
   // Load logs from storage
   await loadLogsFromStorage(true);
-  
+
   setTimeout(initBackendClient, 1000);
 });
 
@@ -401,7 +429,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 
 // Set side panel behavior
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => { });
 
 // Listen for messages from content scripts and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -418,6 +446,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleMessage(message, sender) {
+  // Handle ping for extension availability check
+  if (message.type === 'PING') {
+    return { success: true, pong: true };
+  }
+
   switch (message.type) {
     case 'REGISTER_SESSION':
       // Legacy: Direct assignment to session slot (for backward compatibility)
@@ -427,51 +460,87 @@ async function handleMessage(message, sender) {
         return { success: false, error: 'No tab ID' };
       }
       return registerSession(message.sessionNum, sender.tab.id, message.platform);
-    
+
     case 'REGISTER_TO_POOL':
       // New: Register tab to available agents pool
-      if (!sender.tab || !sender.tab.id) {
+      if (!sender || !sender.tab || !sender.tab.id) {
+        bgError('REGISTER_TO_POOL: No sender or tab ID', JSON.stringify({ sender: sender ? 'exists' : 'null', tab: sender?.tab ? 'exists' : 'null' }));
         return { success: false, error: 'No tab ID' };
       }
       return registerToPool(sender.tab.id, message.platform);
-    
+
     case 'GET_AVAILABLE_AGENTS':
       return getAvailableAgents();
-    
+
+    case 'GET_ALL_AGENTS':
+      // Get all agents including assigned ones (for selector dropdowns)
+      const allAgents = [];
+      // Add assigned participants
+      for (const participant of state.participants) {
+        if (participant.tabId) {
+          try {
+            const tab = await chrome.tabs.get(participant.tabId);
+            allAgents.push({
+              tabId: participant.tabId,
+              platform: participant.platform,
+              title: tab.title || participant.title || 'Chat Tab',
+              assigned: true,
+              position: participant.order,
+              role: participant.role
+            });
+          } catch (e) {
+            // Tab closed
+          }
+        }
+      }
+      // Add available agents
+      allAgents.push(...state.availableAgents.map(a => ({ ...a, assigned: false })));
+      return { success: true, agents: allAgents };
+
     case 'ASSIGN_AGENT_TO_SLOT':
-      return assignAgentToSlot(message.tabId, message.sessionNum);
-    
+      return assignAgentToSlot(message.tabId, message.position || message.sessionNum);
+
+    case 'REMOVE_PARTICIPANT':
+      return removeParticipant(message.position);
+
+    case 'ADD_EMPTY_PARTICIPANT':
+      return addEmptyParticipant(message.position);
+
     case 'REMOVE_AGENT_FROM_POOL':
       return removeAgentFromPool(message.tabId);
-    
+
     case 'UNREGISTER_SESSION':
       return unregisterSession(message.sessionNum);
-    
+
     case 'AI_RESPONSE_RECEIVED':
       return handleAIResponse(message.response, message.sessionNum, message.requestId);
-    
+
     case 'START_CONVERSATION':
       return startConversation(message.initialPrompt);
-    
+
     case 'STOP_CONVERSATION':
       return stopConversation();
-    
+
     case 'GET_STATE':
+      // Ensure state is loaded
+      if (state.participants.length === 0 && !state.isActive) {
+        await restoreStateFromStorage();
+      }
       return getStateWithTabIds();
-    
+
     case 'GET_AVAILABLE_SESSION':
       // Get first available session for backend client
       return await getAvailableSession();
-    
+
     case 'SWAP_AGENTS':
       // Swap Agent A and Agent B
       return await swapAgents();
-    
+
     case 'AUTO_REGISTER_TABS':
       // Manually trigger auto-registration
       await autoRegisterChatTabs();
       return { success: true };
-    
+
     case 'DEBUG_STATE':
       // Debug endpoint to check current state
       const storageCheck = await chrome.storage.local.get([
@@ -485,30 +554,35 @@ async function handleMessage(message, sender) {
         },
         storage: storageCheck
       };
-    
+
     case 'UPDATE_CONFIG':
       return updateConfig(message.config);
-    
+
     case 'GET_CONVERSATION_HISTORY':
       return getConversationHistory();
-    
+
     case 'CLEAR_HISTORY':
       return clearHistory();
-    
+
     case 'SEND_TO_SESSION':
-      return sendMessageToSession(message.sessionNum, message.text, message.requestId);
-    
+      // Legacy: sessionNum is 1-based, convert to 0-based participant index
+      const participantIndex = message.sessionNum - 1;
+      if (participantIndex >= 0 && participantIndex < state.participants.length) {
+        return sendMessageToParticipant(participantIndex, message.text, message.requestId);
+      }
+      return { success: false, error: 'Invalid session number' };
+
     case 'GET_CURRENT_TAB_ID':
       // Ensure we always return a response, even if tab ID is not available
       const tabId = sender?.tab?.id || null;
       bgLog('GET_CURRENT_TAB_ID request from sender:', sender?.tab?.id, 'returning:', tabId);
       return { tabId: tabId };
-    
+
     case 'CHECK_TAB_REGISTRATION':
-      bgLog('CHECK_TAB_REGISTRATION from tab:', sender.tab?.id);
-      const checkTabId = sender.tab?.id;
+      bgLog('CHECK_TAB_REGISTRATION from tab:', sender?.tab?.id);
+      const checkTabId = sender?.tab?.id;
       if (!checkTabId) {
-        bgError('CHECK_TAB_REGISTRATION: No tab ID');
+        bgError('CHECK_TAB_REGISTRATION: No tab ID', JSON.stringify({ sender: sender ? 'exists' : 'null', tab: sender?.tab ? 'exists' : 'null' }));
         return { isRegistered: false, error: 'No tab ID' };
       }
       return checkTabRegistration(checkTabId).then(result => {
@@ -518,89 +592,86 @@ async function handleMessage(message, sender) {
         bgError('CHECK_TAB_REGISTRATION error:', err);
         return { isRegistered: false, error: err.message };
       });
-    
+
     // ============================================
     // BACKEND STATUS
     // ============================================
     case 'GET_BACKEND_STATUS':
       return getBackendStatus();
-    
+
     case 'BACKEND_CONNECTED':
       broadcastBackendStatus({ connected: true, status: 'connected', extensionId: message.extensionId });
       return { success: true };
-    
+
     case 'BACKEND_DISCONNECTED':
       broadcastBackendStatus({ connected: false, status: 'disconnected' });
       return { success: true };
-    
+
     case 'BACKEND_STATUS_UPDATE':
       if (message.status) {
         broadcastBackendStatus(message.status);
       }
       return { success: true };
-    
+
     // ============================================
     // LOGGING MESSAGES
     // ============================================
     case 'ADD_LOG':
       if (message.entry) {
         // Ensure logs are loaded first (in case service worker restarted)
+        // Only load if not already loaded to avoid overwriting memory logs
         if (!logsLoaded) {
           try {
             await loadLogsFromStorage(false);
           } catch (e) {
             console.warn('[Background] Failed to load logs before ADD_LOG:', e);
+            logsLoaded = true; // Mark as loaded to avoid retrying
           }
         }
-        
+
+        // Add new log entry to memory
         debugLogs.push(message.entry);
         if (debugLogs.length > MAX_LOGS) {
           debugLogs.splice(0, debugLogs.length - MAX_LOGS);
         }
-        // Save to storage
+
+        // Save to storage (debounced)
         saveLogsToStorage();
         console.log(`[Background] ADD_LOG: Added log entry, total logs: ${debugLogs.length}`);
       } else {
         console.warn('[Background] ADD_LOG: No entry provided in message');
       }
       return { success: true, logCount: debugLogs.length };
-    
+
     case 'PING':
       // Simple ping to check if service worker is alive
       return { pong: true, timestamp: new Date().toISOString() };
-    
+
     case 'GET_STORAGE_USAGE':
       // Return storage usage info
       const storageInfo = await checkStorageUsage();
       return storageInfo || { error: 'Failed to check storage' };
-    
+
     case 'GET_LOGS':
-      // Always try to load logs from storage first (in case service worker was restarted)
-      // This ensures we have the latest logs even if service worker just started
-      // Don't add startup log here, just load existing logs
-      try {
-        await loadLogsFromStorage(false);
-      } catch (e) {
-        console.error('[Background] Error loading logs in GET_LOGS:', e);
-        // Continue anyway with whatever logs we have in memory
+      // Only load from storage if logs haven't been loaded yet (first time)
+      // After that, memory is the source of truth until service worker restarts
+      if (!logsLoaded) {
+        try {
+          await loadLogsFromStorage(false);
+        } catch (e) {
+          console.error('[Background] Error loading logs in GET_LOGS:', e);
+          // Continue anyway with whatever logs we have in memory
+          logsLoaded = true; // Mark as loaded to avoid retrying
+        }
       }
-      
-      // Add a log entry to confirm GET_LOGS was called (but don't save it to avoid recursion)
-      const getLogsEntry = {
-        timestamp: new Date().toISOString(),
-        level: 'INFO',
-        source: 'Background',
-        message: `GET_LOGS request - returning ${debugLogs.length} logs`
-      };
-      // Add to array but don't save (to avoid infinite loop)
-      debugLogs.push(getLogsEntry);
-      if (debugLogs.length > MAX_LOGS) {
-        debugLogs.splice(0, debugLogs.length - MAX_LOGS);
-      }
-      
+
+      // Don't add a log entry for GET_LOGS - it would create noise
+      // Just return what we have
+      console.log(`[Background] GET_LOGS: Returning ${debugLogs.length} logs from memory`);
+
       // Return a copy to avoid issues
       return { logs: [...debugLogs] };
-    
+
     case 'CLEAR_LOGS':
       debugLogs.length = 0;
       // Clear from all storage types
@@ -611,56 +682,89 @@ async function handleMessage(message, sender) {
         console.error('[Background] Failed to clear local storage:', e);
       });
       return { success: true };
-    
+
     default:
       return { error: 'Unknown message type' };
   }
 }
 
-async function registerSession(sessionNum, tabId, platform) {
-  bgLog('====== REGISTER SESSION ======');
-  bgLog('Session:', sessionNum, 'TabId:', tabId, 'Platform:', platform);
-  
-  // Remove from pool if it's there (in case it was assigned from pool)
+// Add participant to conversation (supports multiple agents)
+async function addParticipant(tabId, platform, order = null) {
+  bgLog('====== ADD PARTICIPANT ======');
+  bgLog('TabId:', tabId, 'Platform:', platform, 'Order:', order);
+
+  // Remove from pool if it's there
   state.availableAgents = state.availableAgents.filter(a => a.tabId !== tabId);
   await chrome.storage.local.set({ availableAgents: state.availableAgents });
-  
-  const sessionKey = sessionNum === 1 ? 'session1' : 'session2';
-  state[sessionKey].tabId = tabId;
-  state[sessionKey].platform = platform;
-  
-  // Save to storage for persistence
-  const registrationData = {};
-  registrationData[`session${sessionNum}_tabId`] = tabId;
-  registrationData[`session${sessionNum}_platform`] = platform;
-  await chrome.storage.local.set(registrationData);
-  
-  bgLog('Saved to storage:', registrationData);
-  
-  // Verify it was saved
-  const verify = await chrome.storage.local.get([`session${sessionNum}_tabId`, `session${sessionNum}_platform`]);
-  bgLog('Verification from storage:', verify);
-  
-  bgLog('State after registration:');
-  bgLog('Session 1:', JSON.stringify(state.session1));
-  bgLog('Session 2:', JSON.stringify(state.session2));
-  
+
+  // Get tab title
+  let title = 'Chat Tab';
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    title = tab.title || 'Chat Tab';
+  } catch (e) {
+    bgLog('Could not get tab title:', e.message);
+  }
+
+  // If order not specified, add to end
+  if (order === null) {
+    order = state.participants.length;
+  }
+
+  // Check if already a participant
+  const existingIndex = state.participants.findIndex(p => p.tabId === tabId);
+  if (existingIndex >= 0) {
+    // Update existing participant
+    state.participants[existingIndex].platform = platform;
+    state.participants[existingIndex].title = title;
+    // Reorder if needed
+    if (order !== existingIndex) {
+      const participant = state.participants.splice(existingIndex, 1)[0];
+      state.participants.splice(order, 0, participant);
+      // Update order numbers
+      state.participants.forEach((p, idx) => {
+        p.order = idx + 1;
+        p.role = `Participant ${idx + 1}`;
+      });
+    }
+  } else {
+    // Add new participant
+    const participant = {
+      tabId: tabId,
+      platform: platform,
+      title: title,
+      order: order + 1,
+      role: `Participant ${order + 1}`
+    };
+    state.participants.splice(order, 0, participant);
+    // Update order numbers for all participants
+    state.participants.forEach((p, idx) => {
+      p.order = idx + 1;
+      p.role = `Participant ${idx + 1}`;
+    });
+  }
+
+  // Save to storage
+  await saveParticipantsToStorage();
+
+  bgLog('Participants after add:', JSON.stringify(state.participants));
+
   // Notify popup about state change
   broadcastStateUpdate();
   broadcastAvailableAgentsUpdate();
-  
-  // Also notify the specific tab to update its UI
-  // Retry a few times in case content script isn't ready yet
+
+  // Notify the specific tab to update its UI
   let retries = 3;
   while (retries > 0) {
     try {
       await chrome.tabs.sendMessage(tabId, {
         type: 'REGISTRATION_CONFIRMED',
-        sessionNum: sessionNum,
-        platform: platform
+        sessionNum: state.participants.findIndex(p => p.tabId === tabId) + 1,
+        platform: platform,
+        order: state.participants.findIndex(p => p.tabId === tabId) + 1
       });
       bgLog('REGISTRATION_CONFIRMED sent successfully to tab:', tabId);
-      break; // Success, exit loop
+      break;
     } catch (e) {
       retries--;
       if (retries > 0) {
@@ -671,15 +775,31 @@ async function registerSession(sessionNum, tabId, platform) {
       }
     }
   }
-  
-  return { success: true, session: state[sessionKey] };
+
+  return { success: true, participant: state.participants.find(p => p.tabId === tabId) };
+}
+
+// Legacy function for backward compatibility
+async function registerSession(sessionNum, tabId, platform) {
+  // Convert to new system: sessionNum becomes order (0-based)
+  return await addParticipant(tabId, platform, sessionNum - 1);
+}
+
+// Save participants to storage
+async function saveParticipantsToStorage() {
+  const storageData = {
+    participants: state.participants,
+    currentTurn: state.currentTurn
+  };
+  await chrome.storage.local.set(storageData);
+  bgLog('Saved participants to storage:', storageData);
 }
 
 // Register tab to available agents pool (new proactive registration)
 async function registerToPool(tabId, platform) {
   bgLog('====== REGISTER TO POOL ======');
   bgLog('TabId:', tabId, 'Platform:', platform);
-  
+
   // Check if already in pool
   const existingIndex = state.availableAgents.findIndex(agent => agent.tabId === tabId);
   if (existingIndex >= 0) {
@@ -696,7 +816,7 @@ async function registerToPool(tabId, platform) {
     } catch (e) {
       bgLog('Could not get tab title:', e.message);
     }
-    
+
     // Add to pool
     state.availableAgents.push({
       tabId: tabId,
@@ -706,10 +826,10 @@ async function registerToPool(tabId, platform) {
     });
     bgLog('Added to pool. Total agents:', state.availableAgents.length);
   }
-  
+
   // Save to storage
   await chrome.storage.local.set({ availableAgents: state.availableAgents });
-  
+
   // Notify tab that it's registered to pool
   try {
     await chrome.tabs.sendMessage(tabId, {
@@ -719,20 +839,20 @@ async function registerToPool(tabId, platform) {
   } catch (e) {
     bgLog('Could not notify tab:', e.message);
   }
-  
+
   // Broadcast update
   broadcastStateUpdate();
   broadcastAvailableAgentsUpdate();
-  
+
   return { success: true, agent: state.availableAgents.find(a => a.tabId === tabId) };
 }
 
 // Get list of available agents
 function getAvailableAgents() {
-  // Filter out agents that are already assigned to slots
-  const assignedTabIds = [state.session1.tabId, state.session2.tabId].filter(Boolean);
+  // Filter out agents that are already assigned to participants
+  const assignedTabIds = state.participants.map(p => p.tabId).filter(Boolean);
   const available = state.availableAgents.filter(agent => !assignedTabIds.includes(agent.tabId));
-  
+
   return {
     success: true,
     agents: available,
@@ -740,28 +860,41 @@ function getAvailableAgents() {
   };
 }
 
-// Assign agent from pool to a session slot
-async function assignAgentToSlot(tabId, sessionNum) {
-  bgLog('====== ASSIGN AGENT TO SLOT ======');
-  bgLog('TabId:', tabId, 'Session:', sessionNum);
-  
+// Assign agent from pool to a position in conversation
+async function assignAgentToSlot(tabId, position) {
+  bgLog('====== ASSIGN AGENT TO POSITION ======');
+  bgLog('TabId:', tabId, 'Position:', position);
+
   // Find agent in pool
   const agent = state.availableAgents.find(a => a.tabId === tabId);
   if (!agent) {
     return { success: false, error: 'Agent not found in pool' };
   }
-  
-  // Remove from pool and assign to slot
-  state.availableAgents = state.availableAgents.filter(a => a.tabId !== tabId);
-  await chrome.storage.local.set({ availableAgents: state.availableAgents });
-  
-  // Assign to session slot
-  const result = await registerSession(sessionNum, tabId, agent.platform);
-  
+
+  // Check if position already has a participant
+  const positionIndex = position - 1; // Convert to 0-based
+  if (positionIndex < state.participants.length) {
+    // Position exists - check if it has an agent assigned
+    const existingParticipant = state.participants[positionIndex];
+    if (existingParticipant.tabId && existingParticipant.tabId !== tabId) {
+      // Release existing agent back to pool
+      try {
+        await chrome.tabs.get(existingParticipant.tabId);
+        await registerToPool(existingParticipant.tabId, existingParticipant.platform);
+      } catch (e) {
+        bgLog('Could not return existing agent to pool:', e.message);
+      }
+    }
+  }
+
+  // Remove from pool and add/update as participant
+  // Position is 1-based from UI, convert to 0-based for array
+  const result = await addParticipant(tabId, agent.platform, position - 1);
+
   // Broadcast updates
   broadcastStateUpdate();
   broadcastAvailableAgentsUpdate();
-  
+
   return result;
 }
 
@@ -769,10 +902,10 @@ async function assignAgentToSlot(tabId, sessionNum) {
 async function removeAgentFromPool(tabId) {
   bgLog('====== REMOVE AGENT FROM POOL ======');
   bgLog('TabId:', tabId);
-  
+
   state.availableAgents = state.availableAgents.filter(a => a.tabId !== tabId);
   await chrome.storage.local.set({ availableAgents: state.availableAgents });
-  
+
   // Notify tab
   try {
     await chrome.tabs.sendMessage(tabId, {
@@ -781,10 +914,10 @@ async function removeAgentFromPool(tabId) {
   } catch (e) {
     bgLog('Could not notify tab:', e.message);
   }
-  
+
   // Broadcast update
   broadcastAvailableAgentsUpdate();
-  
+
   return { success: true };
 }
 
@@ -794,43 +927,115 @@ function broadcastAvailableAgentsUpdate() {
   chrome.runtime.sendMessage({
     type: 'AVAILABLE_AGENTS_UPDATE',
     agents: available.agents
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
-async function unregisterSession(sessionNum) {
-  const sessionKey = sessionNum === 1 ? 'session1' : 'session2';
-  const tabId = state[sessionKey].tabId;
-  const platform = state[sessionKey].platform;
-  
-  state[sessionKey].tabId = null;
-  state[sessionKey].platform = null;
-  
-  // Remove from storage
-  await chrome.storage.local.remove([
-    `session${sessionNum}_tabId`,
-    `session${sessionNum}_platform`
-  ]);
-  
+// Add empty participant slot (no agent assigned yet)
+async function addEmptyParticipant(position = null) {
+  bgLog('====== ADD EMPTY PARTICIPANT ======');
+  bgLog('Position:', position);
+
+  // If position not specified, add to end
+  if (position === null) {
+    position = state.participants.length + 1;
+  }
+
+  // Convert to 0-based index
+  const index = position - 1;
+
+  // Create empty participant (no tabId)
+  const participant = {
+    tabId: null,
+    platform: null,
+    title: null,
+    order: position,
+    role: `Participant ${position}`
+  };
+
+  // Insert at specified position
+  state.participants.splice(index, 0, participant);
+
+  // Update order numbers for all participants
+  state.participants.forEach((p, idx) => {
+    p.order = idx + 1;
+    p.role = `Participant ${idx + 1}`;
+  });
+
+  // Save to storage
+  await saveParticipantsToStorage();
+
+  bgLog('Added empty participant at position', position);
+  bgLog('Total participants:', state.participants.length);
+
+  // Broadcast updates
+  broadcastStateUpdate();
+  broadcastAvailableAgentsUpdate();
+
+  return { success: true, participant: participant };
+}
+
+// Remove participant from conversation
+async function removeParticipant(position) {
+  bgLog('====== REMOVE PARTICIPANT ======');
+  bgLog('Position:', position);
+
+  if (position < 1 || position > state.participants.length) {
+    return { success: false, error: 'Invalid position' };
+  }
+
+  // Get participant info before removing
+  const participant = state.participants[position - 1];
+  if (!participant) {
+    return { success: false, error: 'Participant not found' };
+  }
+
+  const { tabId, platform } = participant;
+
+  // Remove from participants array
+  state.participants.splice(position - 1, 1);
+
+  // Update order numbers for remaining participants
+  state.participants.forEach((p, idx) => {
+    p.order = idx + 1;
+    p.role = `Participant ${idx + 1}`;
+  });
+
+  // Save to storage
+  await saveParticipantsToStorage();
+
   // If tab still exists, add it back to the pool
   if (tabId && platform) {
     try {
       await chrome.tabs.get(tabId);
-      // Tab exists, add to pool
       await registerToPool(tabId, platform);
-      bgLog('Unregistered session', sessionNum, '- added tab back to pool');
+      bgLog('Removed participant at position', position, '- added tab back to pool');
     } catch (e) {
       bgLog('Tab no longer exists, not adding to pool');
     }
   }
-  
-  // Stop conversation if a session is unregistered
+
+  // Stop conversation if participant removed during active conversation
   if (state.isActive) {
     stopConversation();
   }
-  
+
+  // Notify the tab
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'REMOVED_FROM_CONVERSATION'
+    });
+  } catch (e) {
+    bgLog('Could not notify tab:', e.message);
+  }
+
   broadcastStateUpdate();
   broadcastAvailableAgentsUpdate();
   return { success: true };
+}
+
+// Legacy function for backward compatibility
+async function unregisterSession(sessionNum) {
+  return await removeParticipant(sessionNum);
 }
 
 // Store pending backend requests
@@ -840,14 +1045,13 @@ async function handleAIResponse(response, sessionNum, requestId) {
   bgLog('handleAIResponse from session:', sessionNum, 'requestId:', requestId);
   bgLog('Response length:', response.length);
   bgLog('Is active:', state.isActive);
-  
+
   // If this is a backend request, forward to backend client
   if (requestId) {
     bgLog('Backend request detected, forwarding to backend client');
     pendingBackendRequests.set(requestId, { sessionNum, timestamp: Date.now() });
-    
+
     // Forward to backend client (will be handled by backend-client.js)
-    // We'll send a message that backend-client.js will pick up
     chrome.runtime.sendMessage({
       type: 'AI_RESPONSE_FOR_BACKEND',
       requestId: requestId,
@@ -855,202 +1059,248 @@ async function handleAIResponse(response, sessionNum, requestId) {
     }).catch(err => {
       bgError('Failed to forward to backend client:', err);
     });
-    
+
     return { success: true, forwarded: true, requestId };
   }
-  
-  // Normal conversation flow (agent-to-agent)
+
+  // Normal conversation flow (multi-agent)
   if (!state.isActive) {
     bgLog('Conversation not active, ignoring response');
     return { success: false, reason: 'Conversation not active' };
   }
-  
+
+  // Find which participant this is (sessionNum is 1-based from legacy, or order from new system)
+  const participantIndex = state.participants.findIndex(p =>
+    (p.order === sessionNum) || (state.participants.indexOf(p) + 1 === sessionNum)
+  );
+
+  if (participantIndex === -1) {
+    bgError('Participant not found for sessionNum:', sessionNum);
+    return { success: false, error: 'Participant not found' };
+  }
+
+  const participant = state.participants[participantIndex];
+
   // Use response as-is, let the prompt control response length
-  // No truncation to keep conversation natural
   const finalResponse = response.trim();
-  
+
   // Add to conversation history
   const historyEntry = {
     id: Date.now(),
-    sessionNum,
-    role: sessionNum === 1 ? state.session1.role : state.session2.role,
+    sessionNum: participantIndex + 1, // 1-based for compatibility
+    participantIndex: participantIndex, // 0-based index
+    order: participant.order,
+    role: participant.role,
     content: finalResponse,
     timestamp: new Date().toISOString(),
-    platform: sessionNum === 1 ? state.session1.platform : state.session2.platform
+    platform: participant.platform,
+    title: participant.title
   };
-  
+
   state.conversationHistory.push(historyEntry);
   console.log('[Background] Added to history, total messages:', state.conversationHistory.length);
-  
+
   // Save to storage
   await chrome.storage.local.set({
     conversationHistory: state.conversationHistory
   });
-  
+
   // Broadcast update to popup and content scripts
   broadcastConversationUpdate(historyEntry);
   broadcastStateUpdate();
-  
+
   // Check if max turns reached
   if (state.conversationHistory.length >= state.config.maxTurns) {
     console.log('[Background] Max turns reached, stopping');
     await stopConversation();
     return { success: true, stopped: true, reason: 'Max turns reached' };
   }
-  
-  // Send to the other session
-  const nextSession = sessionNum === 1 ? 2 : 1;
-  state.currentTurn = nextSession;
-  
-  console.log('[Background] Will send to session', nextSession, 'after', state.config.autoReplyDelay, 'ms');
-  
-  // Delay before sending to next session
+
+  // Cycle to next participant (circular: 0 → 1 → ... → n-1 → 0)
+  // Skip empty slots (participants without tabId)
+  let nextParticipantIndex = (participantIndex + 1) % state.participants.length;
+  let attempts = 0;
+  const maxAttempts = state.participants.length;
+
+  // Find next participant with a tabId
+  while (attempts < maxAttempts && (!state.participants[nextParticipantIndex] || !state.participants[nextParticipantIndex].tabId)) {
+    nextParticipantIndex = (nextParticipantIndex + 1) % state.participants.length;
+    attempts++;
+  }
+
+  // If no valid participant found, stop conversation
+  if (attempts >= maxAttempts || !state.participants[nextParticipantIndex] || !state.participants[nextParticipantIndex].tabId) {
+    bgError('No valid participants found for next turn, stopping conversation');
+    await stopConversation();
+    return { success: true, stopped: true, reason: 'No valid participants' };
+  }
+
+  state.currentTurn = nextParticipantIndex;
+
+  const nextParticipant = state.participants[nextParticipantIndex];
+  console.log('[Background] Will send to participant', nextParticipantIndex + 1, '(', nextParticipant.platform, ') after', state.config.autoReplyDelay, 'ms');
+
+  // Delay before sending to next participant
   setTimeout(async () => {
-    if (state.isActive) {
-      console.log('[Background] Sending message to session', nextSession);
-      
+    if (state.isActive && state.participants.length > 0) {
+      console.log('[Background] Sending message to participant', nextParticipantIndex + 1);
+
       // Build message with context from recent conversation
-      const messageWithContext = buildMessageWithContext(finalResponse, sessionNum);
-      
-      const result = await sendMessageToSession(nextSession, messageWithContext);
+      const messageWithContext = buildMessageWithContext(finalResponse, participantIndex);
+
+      const result = await sendMessageToParticipant(nextParticipantIndex, messageWithContext);
       console.log('[Background] Send result:', result);
     } else {
-      console.log('[Background] Conversation no longer active, not sending');
+      console.log('[Background] Conversation no longer active or no participants, not sending');
     }
   }, state.config.autoReplyDelay);
-  
+
   return { success: true };
 }
 
 // Build message with context from recent messages
-function buildMessageWithContext(latestResponse, fromSessionNum) {
+function buildMessageWithContext(latestResponse, fromParticipantIndex) {
   const history = state.conversationHistory;
   const contextCount = state.config.contextMessages || 4;
-  
+
   // If this is early in conversation (< 3 messages), just send the response
   if (history.length <= 2) {
     return latestResponse;
   }
-  
+
   // Get recent messages for context (excluding the latest one we just added)
   const recentMessages = history.slice(-(contextCount + 1), -1);
-  
+
   if (recentMessages.length === 0) {
     return latestResponse;
   }
-  
+
   // Build context string
   let contextStr = '📋 **CONTEXT - Cuộc hội thoại gần đây:**\n';
   contextStr += '─'.repeat(40) + '\n';
-  
+
   recentMessages.forEach((msg, index) => {
     // Truncate each context message to keep it brief
-    const shortContent = msg.content.length > 200 
-      ? msg.content.substring(0, 200) + '...' 
+    const shortContent = msg.content.length > 200
+      ? msg.content.substring(0, 200) + '...'
       : msg.content;
     contextStr += `**${msg.role}**: ${shortContent}\n\n`;
   });
-  
+
   contextStr += '─'.repeat(40) + '\n';
   contextStr += '💬 **TIN NHẮN MỚI NHẤT:**\n\n';
   contextStr += latestResponse;
   contextStr += '\n\n─'.repeat(40) + '\n';
   contextStr += '👉 Hãy tiếp tục cuộc thảo luận dựa trên context ở trên. Trả lời NGẮN GỌN (2-4 câu).';
-  
+
   console.log('[Background] Built message with', recentMessages.length, 'context messages');
-  
+
   return contextStr;
 }
 
 async function startConversation(initialPrompt) {
-  if (!state.session1.tabId || !state.session2.tabId) {
-    return { success: false, error: 'Both sessions must be registered' };
+  // Count participants with tabId (actual agents assigned)
+  const validParticipants = state.participants.filter(p => p.tabId);
+
+  if (validParticipants.length < 2) {
+    return { success: false, error: 'At least 2 participants with agents must be assigned' };
   }
-  
+
+  // Find first participant with tabId
+  let firstParticipantIndex = state.participants.findIndex(p => p.tabId);
+  if (firstParticipantIndex === -1) {
+    return { success: false, error: 'No participants with agents assigned' };
+  }
+
   state.isActive = true;
-  state.currentTurn = 1;
+  state.currentTurn = firstParticipantIndex; // Start with first valid participant (0-based index)
   state.config.initialPrompt = initialPrompt;
-  
+
   await chrome.storage.local.set({ isActive: true });
-  
+
   broadcastStateUpdate();
-  
-  // Send initial prompt to session 1
+
+  // Send initial prompt to first valid participant
   if (initialPrompt) {
-    await sendMessageToSession(1, initialPrompt);
+    await sendMessageToParticipant(firstParticipantIndex, initialPrompt);
   }
-  
+
   return { success: true };
 }
 
 async function stopConversation() {
   state.isActive = false;
   await chrome.storage.local.set({ isActive: false });
-  
+
   broadcastStateUpdate();
-  
-  // Notify both sessions to stop
-  if (state.session1.tabId) {
-    chrome.tabs.sendMessage(state.session1.tabId, { type: 'CONVERSATION_STOPPED' }).catch(() => {});
-  }
-  if (state.session2.tabId) {
-    chrome.tabs.sendMessage(state.session2.tabId, { type: 'CONVERSATION_STOPPED' }).catch(() => {});
-  }
-  
+
+  // Notify all participants to stop
+  state.participants.forEach(participant => {
+    if (participant.tabId) {
+      chrome.tabs.sendMessage(participant.tabId, { type: 'CONVERSATION_STOPPED' }).catch(() => { });
+    }
+  });
+
   return { success: true };
 }
 
-async function sendMessageToSession(sessionNum, text, requestId = null) {
-  const session = sessionNum === 1 ? state.session1 : state.session2;
-  
-  if (!session.tabId) {
-    bgError(`Session ${sessionNum} not registered (no tabId)`);
-    return { success: false, error: `Session ${sessionNum} not registered` };
+// Send message to a participant by index (0-based)
+async function sendMessageToParticipant(participantIndex, text, requestId = null) {
+  if (participantIndex < 0 || participantIndex >= state.participants.length) {
+    bgError(`Invalid participant index: ${participantIndex}`);
+    return { success: false, error: `Invalid participant index: ${participantIndex}` };
   }
-  
+
+  const participant = state.participants[participantIndex];
+
+  if (!participant.tabId) {
+    bgError(`Participant ${participantIndex + 1} not registered (no tabId)`);
+    return { success: false, error: `Participant ${participantIndex + 1} not registered` };
+  }
+
   try {
     // Verify tab still exists
     try {
-      const tab = await chrome.tabs.get(session.tabId);
+      const tab = await chrome.tabs.get(participant.tabId);
       if (!tab) {
-        bgError(`Session ${sessionNum} tab not found`);
-        // Clear invalid session
-        session.tabId = null;
-        session.platform = null;
-        return { success: false, error: `Session ${sessionNum} tab was closed` };
+        bgError(`Participant ${participantIndex + 1} tab not found`);
+        // Remove invalid participant
+        state.participants.splice(participantIndex, 1);
+        await saveParticipantsToStorage();
+        return { success: false, error: `Participant ${participantIndex + 1} tab was closed` };
       }
-      bgLog(`Session ${sessionNum} tab verified:`, tab.url);
+      bgLog(`Participant ${participantIndex + 1} tab verified:`, tab.url);
     } catch (tabError) {
-      bgError(`Session ${sessionNum} tab error:`, tabError.message);
+      bgError(`Participant ${participantIndex + 1} tab error:`, tabError.message);
       // Tab was closed or doesn't exist
-      session.tabId = null;
-      session.platform = null;
-      return { success: false, error: `Session ${sessionNum} tab was closed` };
+      state.participants.splice(participantIndex, 1);
+      await saveParticipantsToStorage();
+      return { success: false, error: `Participant ${participantIndex + 1} tab was closed` };
     }
-    
+
     const message = {
       type: 'SEND_MESSAGE',
       text: text
     };
-    
+
     // Include requestId if provided (from backend)
     if (requestId) {
       message.requestId = requestId;
-      bgLog('Forwarding message with requestId:', requestId, 'to session', sessionNum);
+      bgLog('Forwarding message with requestId:', requestId, 'to participant', participantIndex + 1);
     }
-    
-    await chrome.tabs.sendMessage(session.tabId, message);
-    bgLog(`Message sent successfully to session ${sessionNum}`);
+
+    await chrome.tabs.sendMessage(participant.tabId, message);
+    bgLog(`Message sent successfully to participant ${participantIndex + 1}`);
     return { success: true };
   } catch (error) {
-    bgError(`Error sending to session ${sessionNum}:`, error.message);
-    
-    // If tab was closed, clear the session
+    bgError(`Error sending to participant ${participantIndex + 1}:`, error.message);
+
+    // If tab was closed, remove the participant
     if (error.message.includes('tab') || error.message.includes('No tab')) {
-      session.tabId = null;
-      session.platform = null;
+      state.participants.splice(participantIndex, 1);
+      await saveParticipantsToStorage();
     }
-    
+
     return { success: false, error: error.message };
   }
 }
@@ -1078,154 +1328,153 @@ function getState() {
 function getStateWithTabIds() {
   return {
     isActive: state.isActive,
-    session1: {
-      connected: !!state.session1.tabId,
-      tabId: state.session1.tabId,
-      platform: state.session1.platform,
-      role: state.session1.role
-    },
-    session2: {
-      connected: !!state.session2.tabId,
-      tabId: state.session2.tabId,
-      platform: state.session2.platform,
-      role: state.session2.role
-    },
+    participants: state.participants.map(p => ({
+      connected: !!p.tabId,
+      tabId: p.tabId,
+      platform: p.platform,
+      role: p.role,
+      order: p.order,
+      title: p.title
+    })),
     currentTurn: state.currentTurn,
     config: state.config,
-    messageCount: state.conversationHistory.length
+    messageCount: state.conversationHistory.length,
+    // Legacy compatibility
+    session1: state.participants.length > 0 ? {
+      connected: !!state.participants[0].tabId,
+      tabId: state.participants[0].tabId,
+      platform: state.participants[0].platform,
+      role: state.participants[0].role
+    } : { connected: false, tabId: null, platform: null, role: null },
+    session2: state.participants.length > 1 ? {
+      connected: !!state.participants[1].tabId,
+      tabId: state.participants[1].tabId,
+      platform: state.participants[1].platform,
+      role: state.participants[1].role
+    } : { connected: false, tabId: null, platform: null, role: null }
   };
 }
 
-// Swap Agent A and Agent B
-async function swapAgents() {
-  bgLog('Swapping Agent A and Agent B...');
-  
-  // Swap in memory
-  const temp = { ...state.session1 };
-  state.session1 = { ...state.session2 };
-  state.session2 = temp;
-  
-  // Update storage
-  await chrome.storage.local.set({
-    session1_tabId: state.session1.tabId,
-    session1_platform: state.session1.platform,
-    session2_tabId: state.session2.tabId,
-    session2_platform: state.session2.platform
+// Reorder participants (swap positions)
+async function reorderParticipants(fromPosition, toPosition) {
+  bgLog('Reordering participants from', fromPosition, 'to', toPosition);
+
+  if (fromPosition < 1 || fromPosition > state.participants.length ||
+    toPosition < 1 || toPosition > state.participants.length) {
+    return { success: false, error: 'Invalid positions' };
+  }
+
+  // Convert to 0-based indices
+  const fromIdx = fromPosition - 1;
+  const toIdx = toPosition - 1;
+
+  // Move participant
+  const participant = state.participants.splice(fromIdx, 1)[0];
+  state.participants.splice(toIdx, 0, participant);
+
+  // Update order numbers
+  state.participants.forEach((p, idx) => {
+    p.order = idx + 1;
+    p.role = `Participant ${idx + 1}`;
   });
-  
+
+  // Save to storage
+  await saveParticipantsToStorage();
+
   // Notify tabs
-  if (state.session1.tabId) {
-    chrome.tabs.sendMessage(state.session1.tabId, {
-      type: 'REGISTRATION_CONFIRMED',
-      sessionNum: 1,
-      platform: state.session1.platform
-    }).catch(() => {});
-  }
-  
-  if (state.session2.tabId) {
-    chrome.tabs.sendMessage(state.session2.tabId, {
-      type: 'REGISTRATION_CONFIRMED',
-      sessionNum: 2,
-      platform: state.session2.platform
-    }).catch(() => {});
-  }
-  
+  state.participants.forEach((p, idx) => {
+    if (p.tabId) {
+      chrome.tabs.sendMessage(p.tabId, {
+        type: 'REGISTRATION_CONFIRMED',
+        sessionNum: idx + 1,
+        platform: p.platform,
+        order: idx + 1
+      }).catch(() => { });
+    }
+  });
+
   broadcastStateUpdate();
-  bgLog('Agents swapped successfully');
-  
-  return { success: true, session1: state.session1, session2: state.session2 };
+  bgLog('Participants reordered successfully');
+
+  return { success: true, participants: state.participants };
 }
 
 // Get first available session for backend client
 async function getAvailableSession() {
   // Always restore from storage first to ensure we have latest state
-  bgLog('getAvailableSession called, current state:', {
-    session1_tabId: state.session1.tabId,
-    session2_tabId: state.session2.tabId
-  });
-  
+  bgLog('getAvailableSession called, current participants:', state.participants.length);
+
   await restoreStateFromStorage();
-  
-  bgLog('After restore, state:', {
-    session1_tabId: state.session1.tabId,
-    session2_tabId: state.session2.tabId
-  });
-  
-  // Prefer session 1, then session 2
+
+  bgLog('After restore, participants:', state.participants.length);
+
+  // Return first available participant
   // Verify tab still exists before returning
-  
-  if (state.session1.tabId) {
-    try {
-      // Verify tab exists
-      const tab = await chrome.tabs.get(state.session1.tabId);
-      if (tab) {
-        bgLog('Available session: 1 (tabId:', state.session1.tabId, ', url:', tab.url, ')');
-        return { 
-          available: true, 
-          sessionNum: 1,
-          tabId: state.session1.tabId,
-          platform: state.session1.platform,
-          role: state.session1.role
-        };
+
+  for (let i = 0; i < state.participants.length; i++) {
+    const participant = state.participants[i];
+    if (participant.tabId) {
+      try {
+        // Verify tab exists
+        const tab = await chrome.tabs.get(participant.tabId);
+        if (tab) {
+          bgLog('Available participant:', i + 1, '(tabId:', participant.tabId, ', url:', tab.url, ')');
+          return {
+            available: true,
+            sessionNum: i + 1, // 1-based for compatibility
+            participantIndex: i, // 0-based
+            tabId: participant.tabId,
+            platform: participant.platform,
+            role: participant.role,
+            order: participant.order
+          };
+        }
+      } catch (error) {
+        bgLog('Participant', i + 1, 'tab no longer exists:', error.message);
+        // Tab was closed, remove participant
+        state.participants.splice(i, 1);
+        await saveParticipantsToStorage();
       }
-    } catch (error) {
-      bgLog('Session 1 tab no longer exists:', error.message);
-      // Tab was closed, clear it
-      state.session1.tabId = null;
-      state.session1.platform = null;
-      await chrome.storage.local.remove(['session1_tabId', 'session1_platform']);
     }
   }
-  
-  if (state.session2.tabId) {
-    try {
-      // Verify tab exists
-      const tab = await chrome.tabs.get(state.session2.tabId);
-      if (tab) {
-        bgLog('Available session: 2 (tabId:', state.session2.tabId, ', url:', tab.url, ')');
-        return { 
-          available: true, 
-          sessionNum: 2,
-          tabId: state.session2.tabId,
-          platform: state.session2.platform,
-          role: state.session2.role
-        };
-      }
-    } catch (error) {
-      bgLog('Session 2 tab no longer exists:', error.message);
-      // Tab was closed, clear it
-      state.session2.tabId = null;
-      state.session2.platform = null;
-      await chrome.storage.local.remove(['session2_tabId', 'session2_platform']);
-    }
-  }
-  
-  bgLog('No available session');
-  bgLog('Current state:', {
-    session1: {
-      tabId: state.session1.tabId,
-      platform: state.session1.platform,
-      role: state.session1.role
-    },
-    session2: {
-      tabId: state.session2.tabId,
-      platform: state.session2.platform,
-      role: state.session2.role
-    }
-  });
-  
+
+  bgLog('No available participant');
+  bgLog('Current participants:', state.participants.length);
+
   // Try to get from storage one more time
   try {
-    const storage = await chrome.storage.local.get(['session1_tabId', 'session2_tabId']);
-    bgLog('Storage check:', {
-      session1_tabId: storage.session1_tabId,
-      session2_tabId: storage.session2_tabId
-    });
+    const storage = await chrome.storage.local.get(['participants']);
+    if (storage.participants && storage.participants.length > 0) {
+      bgLog('Found participants in storage, restoring...');
+      await restoreStateFromStorage();
+      // Try again after restore
+      for (let i = 0; i < state.participants.length; i++) {
+        const participant = state.participants[i];
+        if (participant.tabId) {
+          try {
+            const tab = await chrome.tabs.get(participant.tabId);
+            if (tab) {
+              return {
+                available: true,
+                sessionNum: i + 1,
+                participantIndex: i,
+                tabId: participant.tabId,
+                platform: participant.platform,
+                role: participant.role,
+                order: participant.order
+              };
+            }
+          } catch (e) {
+            // Continue to next
+          }
+        }
+      }
+    }
   } catch (e) {
     bgError('Error checking storage:', e);
   }
-  
-  return { 
+
+  return {
     available: false,
     session1: {
       hasTabId: !!state.session1.tabId,
@@ -1245,38 +1494,38 @@ function smartTruncate(text, maxLength) {
   if (!text || text.length <= maxLength) {
     return text;
   }
-  
+
   console.log('[Background] Smart truncating from', text.length, 'to max', maxLength);
-  
+
   // Find the last complete sentence within maxLength
   const truncated = text.substring(0, maxLength);
-  
+
   // Look for Vietnamese and English sentence endings
   // Vietnamese often uses: . ! ? and sometimes ends with quotes like "
   const sentenceEndRegex = /[.!?]["']?\s/g;
   let lastSentenceEnd = -1;
   let match;
-  
+
   while ((match = sentenceEndRegex.exec(truncated)) !== null) {
     // Include the punctuation but not the space
     lastSentenceEnd = match.index + match[0].length - 1;
   }
-  
+
   // Also check for sentence ending at the very end (no trailing space)
   const endMatch = truncated.match(/[.!?]["']?$/);
   if (endMatch) {
     lastSentenceEnd = truncated.length;
   }
-  
+
   console.log('[Background] Last sentence end at:', lastSentenceEnd);
-  
+
   // If found a sentence boundary at reasonable position (at least 30% of content)
   if (lastSentenceEnd > maxLength * 0.3) {
     const result = text.substring(0, lastSentenceEnd).trim();
     console.log('[Background] Truncated at sentence boundary, new length:', result.length);
     return result;
   }
-  
+
   // Fallback: try to cut at paragraph/line break
   const lastNewline = truncated.lastIndexOf('\n');
   if (lastNewline > maxLength * 0.5) {
@@ -1284,7 +1533,7 @@ function smartTruncate(text, maxLength) {
     console.log('[Background] Truncated at newline, new length:', result.length);
     return result;
   }
-  
+
   // Fallback: try to cut at word boundary
   const lastSpace = truncated.lastIndexOf(' ');
   if (lastSpace > maxLength * 0.7) {
@@ -1292,7 +1541,7 @@ function smartTruncate(text, maxLength) {
     console.log('[Background] Truncated at word boundary, new length:', result.length);
     return result + '...';
   }
-  
+
   // Last resort: hard cut (shouldn't happen with maxLength=2000)
   console.log('[Background] Hard truncate (fallback)');
   return truncated.trim() + '...';
@@ -1302,51 +1551,39 @@ function smartTruncate(text, maxLength) {
 async function checkTabRegistration(tabId) {
   console.log('[Background] ====== CHECK TAB REGISTRATION ======');
   console.log('[Background] Checking for tabId:', tabId, 'type:', typeof tabId);
-  
+
   // Always restore from storage first to ensure we have latest state
   await restoreStateFromStorage();
-  
-  console.log('[Background] After restore - Session 1 tabId:', state.session1.tabId, 'type:', typeof state.session1.tabId);
-  console.log('[Background] After restore - Session 2 tabId:', state.session2.tabId, 'type:', typeof state.session2.tabId);
-  
+
+  console.log('[Background] After restore - Participants:', state.participants.length);
+
   if (!tabId) {
     console.log('[Background] ERROR: tabId is null/undefined');
     return { isRegistered: false, error: 'No tabId provided' };
   }
-  
+
   // Compare as numbers to be safe
   const checkTabId = Number(tabId);
-  const session1TabId = state.session1.tabId ? Number(state.session1.tabId) : null;
-  const session2TabId = state.session2.tabId ? Number(state.session2.tabId) : null;
-  
-  console.log('[Background] Comparing:', checkTabId, 'vs', session1TabId, 'and', session2TabId);
-  
-  if (session1TabId && checkTabId === session1TabId) {
-    bgLog('MATCH: Tab is Session 1 (Agent A)');
+
+  // Check if in participants array
+  const participantIndex = state.participants.findIndex(p => Number(p.tabId) === checkTabId);
+  if (participantIndex >= 0) {
+    const participant = state.participants[participantIndex];
+    bgLog('MATCH: Tab is Participant', participantIndex + 1, '(', participant.role, ')');
     const result = {
       isRegistered: true,
-      sessionNum: 1,
-      platform: state.session1.platform,
-      role: state.session1.role
+      sessionNum: participantIndex + 1, // 1-based for compatibility
+      participantIndex: participantIndex, // 0-based
+      platform: participant.platform,
+      role: participant.role,
+      order: participant.order
     };
     bgLog('Returning result:', JSON.stringify(result));
     return result;
   }
-  
-  if (session2TabId && checkTabId === session2TabId) {
-    bgLog('MATCH: Tab is Session 2 (Agent B)');
-    const result = {
-      isRegistered: true,
-      sessionNum: 2,
-      platform: state.session2.platform,
-      role: state.session2.role
-    };
-    bgLog('Returning result:', JSON.stringify(result));
-    return result;
-  }
-  
+
   // Check if in available agents pool
-  const agentInPool = state.availableAgents.find(a => a.tabId === checkTabId);
+  const agentInPool = state.availableAgents.find(a => Number(a.tabId) === checkTabId);
   if (agentInPool) {
     bgLog('MATCH: Tab is in available agents pool');
     return {
@@ -1356,7 +1593,7 @@ async function checkTabRegistration(tabId) {
       tabId: agentInPool.tabId
     };
   }
-  
+
   bgLog('NO MATCH: Tab is not registered');
   return { isRegistered: false };
 }
@@ -1364,7 +1601,7 @@ async function checkTabRegistration(tabId) {
 async function updateConfig(newConfig) {
   state.config = { ...state.config, ...newConfig };
   await chrome.storage.local.set({ config: state.config });
-  
+
   broadcastStateUpdate();
   return { success: true, config: state.config };
 }
@@ -1376,7 +1613,7 @@ async function getConversationHistory() {
 async function clearHistory() {
   state.conversationHistory = [];
   await chrome.storage.local.set({ conversationHistory: [] });
-  
+
   broadcastConversationUpdate(null, true);
   return { success: true };
 }
@@ -1402,65 +1639,64 @@ function broadcastBackendStatus(status) {
     ...status,
     lastUpdate: new Date().toISOString()
   };
-  
+
   bgLog('Backend status updated:', JSON.stringify(backendStatus));
-  
+
   // Broadcast to side panel
   chrome.runtime.sendMessage({
     type: 'BACKEND_STATUS_UPDATE',
     status: backendStatus
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 function broadcastStateUpdate() {
   const stateUpdate = getState();
-  
+
   // Send to popup
   chrome.runtime.sendMessage({
     type: 'STATE_UPDATE',
     state: stateUpdate
-  }).catch(() => {});
-  
+  }).catch(() => { });
+
   // Send to content scripts
   if (state.session1.tabId) {
     chrome.tabs.sendMessage(state.session1.tabId, {
       type: 'STATE_UPDATE',
       state: stateUpdate
-    }).catch(() => {});
+    }).catch(() => { });
   }
   if (state.session2.tabId) {
     chrome.tabs.sendMessage(state.session2.tabId, {
       type: 'STATE_UPDATE',
       state: stateUpdate
-    }).catch(() => {});
+    }).catch(() => { });
   }
 }
 
 function broadcastConversationUpdate(entry, cleared = false) {
-  const message = cleared 
+  const message = cleared
     ? { type: 'CONVERSATION_CLEARED' }
     : { type: 'NEW_MESSAGE', message: entry, history: state.conversationHistory };
-  
+
   // Send to popup
-  chrome.runtime.sendMessage(message).catch(() => {});
-  
-  // Send to content scripts
-  if (state.session1.tabId) {
-    chrome.tabs.sendMessage(state.session1.tabId, message).catch(() => {});
-  }
-  if (state.session2.tabId) {
-    chrome.tabs.sendMessage(state.session2.tabId, message).catch(() => {});
-  }
+  chrome.runtime.sendMessage(message).catch(() => { });
+
+  // Send to all participants
+  state.participants.forEach(participant => {
+    if (participant.tabId) {
+      chrome.tabs.sendMessage(participant.tabId, message).catch(() => { });
+    }
+  });
 }
 
-// Handle tab close - unregister session and remove from pool
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (state.session1.tabId === tabId) {
-    unregisterSession(1);
-  } else if (state.session2.tabId === tabId) {
-    unregisterSession(2);
+// Handle tab close - remove participant and remove from pool
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  // Check if in participants
+  const participantIndex = state.participants.findIndex(p => p.tabId === tabId);
+  if (participantIndex >= 0) {
+    await removeParticipant(participantIndex + 1); // 1-based position
   }
-  
+
   // Also remove from available agents pool
   const wasInPool = state.availableAgents.some(a => a.tabId === tabId);
   if (wasInPool) {
@@ -1474,8 +1710,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 async function restoreStateFromStorage() {
   try {
     const result = await chrome.storage.local.get([
-      'conversationHistory', 
-      'config', 
+      'conversationHistory',
+      'config',
       'isActive',
       'session1_tabId',
       'session1_platform',
@@ -1483,14 +1719,14 @@ async function restoreStateFromStorage() {
       'session2_platform',
       'availableAgents'
     ]);
-    
+
     if (result.conversationHistory) {
       state.conversationHistory = result.conversationHistory;
     }
     if (result.config) {
       state.config = { ...state.config, ...result.config };
     }
-    
+
     // Restore available agents pool
     if (result.availableAgents && Array.isArray(result.availableAgents)) {
       // Verify tabs still exist and filter out invalid ones
@@ -1507,40 +1743,67 @@ async function restoreStateFromStorage() {
       await chrome.storage.local.set({ availableAgents: state.availableAgents });
       bgLog('Restored available agents from storage:', validAgents.length);
     }
-    
-    // Restore session registrations
-    if (result.session1_tabId) {
-      state.session1.tabId = result.session1_tabId;
-      state.session1.platform = result.session1_platform || null;
-      bgLog('Restored session 1 from storage:', result.session1_tabId, result.session1_platform);
-      
-      // Verify tab still exists
-      try {
-        await chrome.tabs.get(result.session1_tabId);
-      } catch (e) {
-        bgLog('Session 1 tab no longer exists, clearing');
-        state.session1.tabId = null;
-        state.session1.platform = null;
-        await chrome.storage.local.remove(['session1_tabId', 'session1_platform']);
+
+    // Restore participants (new system)
+    if (result.participants && Array.isArray(result.participants)) {
+      // Verify tabs still exist and filter out invalid ones
+      const validParticipants = [];
+      for (const participant of result.participants) {
+        try {
+          await chrome.tabs.get(participant.tabId);
+          validParticipants.push(participant);
+        } catch (e) {
+          bgLog('Participant tab no longer exists, removing:', participant.tabId);
+        }
+      }
+      state.participants = validParticipants;
+      // Update order numbers
+      state.participants.forEach((p, idx) => {
+        p.order = idx + 1;
+        p.role = `Participant ${idx + 1}`;
+      });
+      state.currentTurn = result.currentTurn || 0;
+      await saveParticipantsToStorage();
+      bgLog('Restored participants from storage:', validParticipants.length);
+    } else {
+      // Legacy: restore from session1/session2 format
+      const legacyParticipants = [];
+      if (result.session1_tabId) {
+        try {
+          await chrome.tabs.get(result.session1_tabId);
+          legacyParticipants.push({
+            tabId: result.session1_tabId,
+            platform: result.session1_platform || null,
+            title: 'Chat Tab',
+            order: 1,
+            role: 'Participant 1'
+          });
+        } catch (e) {
+          bgLog('Session 1 tab no longer exists');
+        }
+      }
+      if (result.session2_tabId) {
+        try {
+          await chrome.tabs.get(result.session2_tabId);
+          legacyParticipants.push({
+            tabId: result.session2_tabId,
+            platform: result.session2_platform || null,
+            title: 'Chat Tab',
+            order: 2,
+            role: 'Participant 2'
+          });
+        } catch (e) {
+          bgLog('Session 2 tab no longer exists');
+        }
+      }
+      if (legacyParticipants.length > 0) {
+        state.participants = legacyParticipants;
+        state.currentTurn = 0;
+        await saveParticipantsToStorage();
+        bgLog('Migrated legacy sessions to participants:', legacyParticipants.length);
       }
     }
-    
-    if (result.session2_tabId) {
-      state.session2.tabId = result.session2_tabId;
-      state.session2.platform = result.session2_platform || null;
-      bgLog('Restored session 2 from storage:', result.session2_tabId, result.session2_platform);
-      
-      // Verify tab still exists
-      try {
-        await chrome.tabs.get(result.session2_tabId);
-      } catch (e) {
-        bgLog('Session 2 tab no longer exists, clearing');
-        state.session2.tabId = null;
-        state.session2.platform = null;
-        await chrome.storage.local.remove(['session2_tabId', 'session2_platform']);
-      }
-    }
-    
+
     bgLog('State restored from storage');
   } catch (error) {
     bgError('Error restoring state from storage:', error);
@@ -1592,49 +1855,49 @@ function detectPlatformFromUrl(url) {
 // Auto-register available chat tabs to pool (new proactive registration)
 async function autoRegisterChatTabs() {
   bgLog('Auto-registering chat tabs to pool...');
-  
+
   try {
     // Get all tabs
     const tabs = await chrome.tabs.query({});
-    
+
     // Filter to supported chat platforms
     const chatTabs = tabs.filter(tab => {
       // Must have a valid URL
       if (!tab.url) return false;
-      
+
       // Exclude extension pages
       if (tab.url.startsWith('chrome-extension://')) return false;
-      
+
       // Must be a supported chat platform
       return isChatPlatform(tab.url);
     });
-    
+
     bgLog('Found chat tabs:', chatTabs.length, chatTabs.map(t => ({ id: t.id, url: t.url })));
-    
+
     if (chatTabs.length === 0) {
       bgLog('No chat tabs found');
       return;
     }
-    
+
     // Register all chat tabs to pool (if not already registered or assigned)
-    const assignedTabIds = [state.session1.tabId, state.session2.tabId].filter(Boolean);
+    const assignedTabIds = state.participants.map(p => p.tabId).filter(Boolean);
     const poolTabIds = state.availableAgents.map(a => a.tabId);
-    
+
     for (const tab of chatTabs) {
       // Skip if already assigned to a slot or already in pool
       if (assignedTabIds.includes(tab.id) || poolTabIds.includes(tab.id)) {
         continue;
       }
-      
+
       const platform = detectPlatformFromUrl(tab.url);
       if (platform) {
         bgLog('Auto-registering tab', tab.id, 'to pool (', platform, ')');
         await registerToPool(tab.id, platform);
       }
     }
-    
+
     bgLog('Auto-registration to pool complete');
-    
+
   } catch (error) {
     bgError('Error in auto-register:', error);
   }
@@ -1644,20 +1907,20 @@ async function autoRegisterChatTabs() {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // Only process when tab is fully loaded
   if (changeInfo.status !== 'complete') return;
-  
+
   // Check if this is a chat platform
   if (!isChatPlatform(tab.url)) return;
-  
-  // Check if already assigned to a slot
-  if (state.session1.tabId === tabId || state.session2.tabId === tabId) {
+
+  // Check if already assigned to participants
+  if (state.participants.some(p => p.tabId === tabId)) {
     return; // Already assigned
   }
-  
+
   // Check if already in pool
   if (state.availableAgents.some(a => a.tabId === tabId)) {
     return; // Already in pool
   }
-  
+
   // Register to pool
   const platform = detectPlatformFromUrl(tab.url);
   if (platform) {
@@ -1683,4 +1946,3 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 
 // Auto-register on startup
 setTimeout(autoRegisterChatTabs, 3000);
-

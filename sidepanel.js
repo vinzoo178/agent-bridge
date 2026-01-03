@@ -48,7 +48,7 @@ const promptGenerators = {
 - 1 câu: Câu hỏi cho đối phương
 
 Bắt đầu với lập trường của bạn (NHỚ: dưới 200 từ!)`,
-  
+
   story: (topic) => `Hãy cùng viết một câu chuyện với AI khác!
 
 📌 CHỦ ĐỀ: "${topic}"
@@ -60,7 +60,7 @@ Bắt đầu với lập trường của bạn (NHỚ: dưới 200 từ!)`,
 4. KHÔNG viết kết thúc truyện
 
 Bắt đầu với 2-3 câu mở đầu hấp dẫn!`,
-  
+
   qa: (topic) => `Bạn đang phỏng vấn một AI khác.
 
 📌 CHỦ ĐỀ: "${topic}"
@@ -72,7 +72,7 @@ Bắt đầu với 2-3 câu mở đầu hấp dẫn!`,
 4. KHÔNG trả lời dài dòng
 
 Bắt đầu với MỘT câu hỏi đầu tiên!`,
-  
+
   brainstorm: (topic) => `Hãy cùng brainstorm với AI khác!
 
 📌 VẤN ĐỀ: "${topic}"
@@ -105,10 +105,10 @@ document.addEventListener('DOMContentLoaded', () => {
   loadState();
   loadConfigOnce(); // Load config only once at start
   setupEventListeners();
-  
+
   // Poll for state updates (but not config)
   statePollingInterval = setInterval(loadStateOnly, 2000);
-  
+
   // Load backend status
   loadBackendStatus();
   setInterval(loadBackendStatus, 3000); // Check every 3 seconds
@@ -117,7 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function initializeUI() {
   elements.startBtn.disabled = true;
   elements.stopBtn.disabled = true;
-  
+
   // Enable send button if there's text in the input
   updateSendButtonState();
 }
@@ -125,7 +125,7 @@ function initializeUI() {
 // Update send button state based on input text and session status
 function updateSendButtonState(forceCanStart = null) {
   const hasText = elements.topicInput.value.trim().length > 0;
-  
+
   if (forceCanStart !== null) {
     // If session state is provided, use it
     elements.startBtn.disabled = !forceCanStart && !hasText;
@@ -140,11 +140,14 @@ async function loadStateOnly() {
   try {
     const response = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
     updateUI(response);
-    
+
     const historyResponse = await chrome.runtime.sendMessage({ type: 'GET_CONVERSATION_HISTORY' });
     if (historyResponse.history) {
       renderConversationHistory(historyResponse.history);
     }
+
+    // Also refresh available agents periodically
+    loadAvailableAgents();
   } catch (error) {
     console.error('[Side Panel] Failed to load state:', error);
   }
@@ -154,12 +157,14 @@ async function loadStateOnly() {
 async function loadState() {
   await loadStateOnly();
   await loadConfigOnce();
+  // Also load available agents
+  loadAvailableAgents();
 }
 
 // Load config only once at startup
 async function loadConfigOnce() {
   if (configModified) return; // Don't overwrite user's changes
-  
+
   try {
     const configData = await chrome.storage.local.get(['config']);
     if (configData.config) {
@@ -178,7 +183,7 @@ function setupEventListeners() {
   if (themeToggle) {
     themeToggle.addEventListener('click', toggleTheme);
   }
-  
+
   // Tab navigation
   document.querySelectorAll('.tab-icon').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -186,19 +191,19 @@ function setupEventListeners() {
       switchTab(tabName);
     });
   });
-  
+
   // Template quick buttons in chat header
   document.querySelectorAll('.template-quick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const template = btn.dataset.template;
-      
+
       // Remove active class from all buttons
       document.querySelectorAll('.template-quick-btn').forEach(b => b.classList.remove('active'));
-      
+
       // Add active class to clicked button
       btn.classList.add('active');
       selectedTemplate = template;
-      
+
       // Auto-generate prompt if topic exists
       const topic = elements.topicInput.value.trim();
       if (topic && promptGenerators[template]) {
@@ -209,14 +214,14 @@ function setupEventListeners() {
       }
     });
   });
-  
+
   // Auto-generate prompt when topic changes (if template selected)
   elements.topicInput.addEventListener('input', () => {
     if (selectedTemplate && elements.topicInput.value.trim()) {
       const topic = elements.topicInput.value.trim();
       elements.initialPrompt.value = promptGenerators[selectedTemplate](topic);
     }
-    
+
     // Enable send button when there's text (even if sessions not connected)
     const hasText = elements.topicInput.value.trim().length > 0;
     if (hasText) {
@@ -226,7 +231,7 @@ function setupEventListeners() {
       updateSendButtonState();
     }
   });
-  
+
   // Enter key to send (normal chat behavior)
   elements.topicInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -236,46 +241,78 @@ function setupEventListeners() {
       }
     }
   });
-  
+
   // Track config changes
   elements.replyDelay.addEventListener('input', () => { configModified = true; });
   elements.maxTurns.addEventListener('input', () => { configModified = true; });
   elements.contextMessages.addEventListener('input', () => { configModified = true; });
-  
+
   // Save config
   elements.saveConfig.addEventListener('click', saveConfiguration);
-  
+
   // Start/Stop buttons
   elements.startBtn.addEventListener('click', startConversation);
   elements.stopBtn.addEventListener('click', stopConversation);
-  
+
   // Clear history
   elements.clearHistory.addEventListener('click', clearHistory);
-  
-  // Swap agents button
-  const swapAgentsBtn = document.getElementById('swap-agents-btn');
-  if (swapAgentsBtn) {
-    swapAgentsBtn.addEventListener('click', swapAgents);
+
+  // Agent selectors
+  const agentASelector = document.getElementById('agent-a-selector');
+  const agentBSelector = document.getElementById('agent-b-selector');
+
+  if (agentASelector) {
+    agentASelector.addEventListener('change', (e) => {
+      const tabId = e.target.value ? parseInt(e.target.value) : null;
+      assignAgentToSlot(tabId, 1);
+    });
   }
-  
+
+  if (agentBSelector) {
+    agentBSelector.addEventListener('change', (e) => {
+      const tabId = e.target.value ? parseInt(e.target.value) : null;
+      assignAgentToSlot(tabId, 2);
+    });
+  }
+
   // Release buttons
   const releaseSession1Btn = document.getElementById('release-session1-btn');
   if (releaseSession1Btn) {
     releaseSession1Btn.addEventListener('click', () => releaseAgentFromSlot(1));
   }
-  
+
   const releaseSession2Btn = document.getElementById('release-session2-btn');
   if (releaseSession2Btn) {
     releaseSession2Btn.addEventListener('click', () => releaseAgentFromSlot(2));
   }
-  
+
+
+
   // Load available agents
   loadAvailableAgents();
-  
+
+  // Refresh agents button
+  const refreshAgentsBtn = document.getElementById('refresh-agents-btn');
+  if (refreshAgentsBtn) {
+    refreshAgentsBtn.addEventListener('click', async () => {
+      // Trigger auto-registration to catch any missed tabs
+      try {
+        await chrome.runtime.sendMessage({ type: 'AUTO_REGISTER_TABS' });
+        showToast('🔄 Refreshing agents...', 'success');
+        setTimeout(() => {
+          loadAvailableAgents();
+        }, 1000);
+      } catch (error) {
+        console.error('[Side Panel] Refresh error:', error);
+        showToast('❌ Failed to refresh', 'error');
+      }
+    });
+  }
+
   // Listen for updates from background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Side Panel] Received message:', message.type);
-    
+
     switch (message.type) {
       case 'STATE_UPDATE':
         updateUI(message.state);
@@ -294,7 +331,7 @@ function setupEventListeners() {
         renderAvailableAgents(message.agents);
         break;
     }
-    sendResponse({ received: true });
+    // Don't sendResponse blindly - it interferes with other message channels!
   });
 }
 
@@ -315,7 +352,7 @@ function loadTheme() {
 function toggleTheme() {
   const isDark = document.body.classList.toggle('dark-theme');
   const theme = isDark ? 'dark' : 'light';
-  
+
   try {
     localStorage.setItem('ai-bridge-theme', theme);
     showToast(isDark ? '🌙 Dark theme enabled' : '☀️ Light theme enabled', 'success');
@@ -327,7 +364,7 @@ function toggleTheme() {
 // Tab switching function
 function switchTab(tabName) {
   console.log('[Side Panel] Switching to tab:', tabName);
-  
+
   // Update tab icons
   document.querySelectorAll('.tab-icon').forEach(tab => {
     tab.classList.remove('active');
@@ -339,12 +376,12 @@ function switchTab(tabName) {
   } else {
     console.error('[Side Panel] Tab icon not found:', tabName);
   }
-  
+
   // Update tab pages - hide all first
   document.querySelectorAll('.tab-page').forEach(page => {
     page.classList.remove('active');
   });
-  
+
   // Show the selected tab page
   const activePage = document.getElementById(`${tabName}-tab-page`);
   if (activePage) {
@@ -353,7 +390,7 @@ function switchTab(tabName) {
   } else {
     console.error('[Side Panel] Tab page not found:', `${tabName}-tab-page`);
   }
-  
+
   // Auto-refresh debug logs when opening debug tab
   if (tabName === 'debug') {
     setTimeout(() => refreshLogs(), 300);
@@ -380,12 +417,12 @@ async function loadBackendStatus() {
 
 function updateBackendStatusUI(status) {
   if (!elements.backendStatus) return;
-  
+
   const { connected, status: statusText, extensionId, error } = status || {};
-  
+
   // Remove all status classes
   elements.backendStatus.classList.remove('connected', 'connecting', 'disconnected');
-  
+
   if (connected) {
     elements.backendStatus.classList.add('connected');
     elements.backendLabel.textContent = 'Backend';
@@ -402,13 +439,13 @@ function updateBackendStatusUI(status) {
     elements.backendStatus.title = (error || 'Backend server not connected. Start backend server at localhost:3000') + '\nClick to reconnect';
     elements.backendStatus.style.cursor = 'pointer';
   }
-  
+
   // Add click handler to reconnect
   elements.backendStatus.onclick = async () => {
     if (statusText === 'connecting') return; // Don't allow click while connecting
-    
+
     showToast('🔄 Reconnecting to backend...', 'success');
-    
+
     // Trigger backend client initialization
     try {
       await chrome.runtime.sendMessage({ type: 'BACKEND_CONNECT' });
@@ -426,90 +463,161 @@ let wasActive = false;
 
 function updateUI(state) {
   if (!state) return;
-  
+
   // Update global status
   const isActive = state.isActive;
   elements.globalStatus.className = `status-badge ${isActive ? 'active' : ''}`;
   elements.globalStatus.querySelector('.status-label').textContent = isActive ? 'Active' : 'Inactive';
-  
+
   wasActive = isActive;
-  
-  // Update session cards
-  updateSessionCard(
-    elements.session1Card,
-    elements.session1Status,
-    elements.session1Platform,
-    state.session1.connected,
-    state.session1.platform
-  );
-  
-  updateSessionCard(
-    elements.session2Card,
-    elements.session2Status,
-    elements.session2Platform,
-    state.session2.connected,
-    state.session2.platform
-  );
-  
-  // Update button states
-  const canStart = state.session1.connected && state.session2.connected && !isActive;
+
+  // Render participants dynamically
+  renderParticipants(state.participants || []);
+
+  // Update button states - need at least 2 participants
+  const participants = state.participants || [];
+  const allConnected = participants.length >= 2 && participants.every(p => p.connected);
+  const canStart = allConnected && !isActive;
   const canStop = isActive;
-  
+
   updateSendButtonState(canStart);
   elements.stopBtn.disabled = !canStop;
-  
-  // Update swap button
-  const swapBtn = document.getElementById('swap-agents-btn');
-  if (swapBtn) {
-    swapBtn.disabled = !(state.session1.connected && state.session2.connected);
-  }
-  
+
+  // Update agent selectors
+  updateAgentSelectors();
+
   // Update message count
   elements.messageCount.textContent = state.messageCount || 0;
-  
+
   // Update turn indicator
-  if (isActive) {
-    const turnText = state.currentTurn === 1 ? 'Agent A đang trả lời...' : 'Agent B đang trả lời...';
-    const indicator = state.currentTurn === 1 ? 
-      '<svg class="inline w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>' :
-      '<svg class="inline w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>';
+  if (isActive && participants.length > 0) {
+    const currentParticipant = participants[state.currentTurn] || participants[0];
+    const turnText = `${currentParticipant.role || `Participant ${state.currentTurn + 1}`} đang trả lời...`;
+    const indicator = '<svg class="inline w-2 h-2 mr-1 animate-pulse" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>';
     elements.turnIndicator.innerHTML = indicator + turnText;
-    elements.turnIndicator.classList.add('active');
+    elements.turnIndicator.className = 'turn-indicator active';
   } else {
-    const readyIcon = state.session1.connected && state.session2.connected ? 
-      '<svg class="inline w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>' :
-      '<svg class="inline w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>';
-    elements.turnIndicator.innerHTML = readyIcon + (state.session1.connected && state.session2.connected ? 'Ready' : 'Waiting...');
-    elements.turnIndicator.classList.remove('active');
+    // Not active - check connection status
+    if (allConnected) {
+      const readyIcon = '<svg class="inline w-2 h-2 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+      elements.turnIndicator.innerHTML = readyIcon + 'Ready to start';
+      elements.turnIndicator.className = 'turn-indicator ready'; // Add ready class for green color
+    } else {
+      const waitingIcon = '<svg class="inline w-2 h-2 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>';
+      const needed = Math.max(2, participants.length);
+      const connectedCount = participants.filter(p => p.connected).length;
+      elements.turnIndicator.innerHTML = waitingIcon + `Connect agents (${connectedCount}/${needed})`;
+      elements.turnIndicator.className = 'turn-indicator';
+    }
   }
 }
 
-function updateSessionCard(card, statusEl, platformEl, connected, platform) {
-  card.className = `session-card ${connected ? 'connected' : ''}`;
-  
-  statusEl.textContent = connected ? 'Connected' : 'Disconnected';
-  statusEl.className = `session-status ${connected ? 'connected' : 'disconnected'}`;
-  
-  // Show/hide release button
-  const releaseBtn = card.querySelector('.btn-release');
-  if (releaseBtn) {
-    releaseBtn.style.display = connected ? 'flex' : 'none';
+// Render all participants dynamically
+function renderParticipants(participants) {
+  const container = document.getElementById('participants-container');
+  if (!container) return;
+
+
+
+  // Clear container
+  container.innerHTML = '';
+
+  // Ensure we have at least 2 slots (fill with placeholders if needed)
+  const displayParticipants = [...participants];
+  while (displayParticipants.length < 2) {
+    displayParticipants.push({
+      tabId: null,
+      connected: false,
+      role: `Participant ${displayParticipants.length + 1}`,
+      order: displayParticipants.length + 1
+    });
   }
-  
-  if (connected && platform) {
-    const icon = platformIcons[platform] || platformIcons.unknown;
-    platformEl.innerHTML = `
-      ${icon}
-      <span>${platform.charAt(0).toUpperCase() + platform.slice(1)}</span>
+
+  // Render each participant (including empty/virtual slots)
+  displayParticipants.forEach((participant, index) => {
+    const hasAgent = participant.tabId && participant.tabId !== null;
+    const connected = participant.connected && hasAgent;
+    const platform = participant.platform || null;
+    const position = participant.order || index + 1;
+
+    const card = document.createElement('div');
+    card.className = `participant-card ${connected ? 'connected' : ''}`;
+    card.dataset.position = position;
+    card.dataset.tabId = participant.tabId || '';
+
+    const icon = connected && platform ? (platformIcons[platform] || platformIcons.unknown) : '';
+    const platformName = platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : 'Not connected';
+
+    card.innerHTML = `
+      <div class="participant-header">
+        <div class="participant-order">
+          <span class="order-number">${position}</span>
+        </div>
+        <span class="participant-label">${connected && platform ? platformName : `Position ${position}`}</span>
+        <span class="session-status ${connected ? 'connected' : 'disconnected'}">${connected ? 'Connected' : 'Disconnected'}</span>
+      </div>
+      <div class="participant-content">
+        <div class="session-platform">
+          ${connected && platform ? icon : '<svg class="platform-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6"></path></svg>'}
+          <span>${connected && platform ? platformName : 'Not connected'}</span>
+        </div>
+        <div class="participant-actions">
+          <select class="agent-selector" data-position="${position}" ${connected ? 'disabled' : ''}>
+            <option value="">Select agent...</option>
+          </select>
+          <button class="btn-release" data-position="${position}" style="display:${connected ? 'flex' : 'none'};" title="Remove from conversation">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
     `;
-  } else {
-    platformEl.innerHTML = `
-      <svg class="platform-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6"></path>
-      </svg>
-      <span>Not connected</span>
-    `;
-  }
+
+    container.appendChild(card);
+
+    // Add arrow between participants (except after last)
+    if (index < displayParticipants.length - 1) {
+      const arrow = document.createElement('div');
+      arrow.className = 'flow-arrow';
+      arrow.innerHTML = `
+        <svg class="flow-arrow-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+        </svg>
+      `;
+      container.appendChild(arrow);
+    }
+  });
+
+  // Attach event listeners
+  attachParticipantListeners();
+}
+
+// Attach event listeners to participant cards
+function attachParticipantListeners() {
+  // Selector change handlers
+  document.querySelectorAll('.agent-selector').forEach(selector => {
+    selector.addEventListener('change', async (e) => {
+      const position = parseInt(selector.dataset.position);
+      const tabId = e.target.value;
+
+      if (!tabId) {
+        // Deselecting - remove participant
+        await releaseAgentFromSlot(position);
+      } else {
+        // Selecting - assign agent
+        await assignAgentToSlot(tabId, position);
+      }
+    });
+  });
+
+  // Release button handlers
+  document.querySelectorAll('.btn-release').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const position = parseInt(btn.dataset.position);
+      await releaseAgentFromSlot(position);
+    });
+  });
 }
 
 async function saveConfiguration() {
@@ -518,15 +626,15 @@ async function saveConfiguration() {
     maxTurns: parseInt(elements.maxTurns.value) || 50,
     contextMessages: parseInt(elements.contextMessages.value) || 4
   };
-  
+
   console.log('[Side Panel] Saving config:', config);
-  
+
   try {
     const result = await chrome.runtime.sendMessage({
       type: 'UPDATE_CONFIG',
       config: config
     });
-    
+
     console.log('[Side Panel] Config saved:', result);
     configModified = false; // Reset flag after successful save
     showToast('✅ Config saved!', 'success');
@@ -538,31 +646,31 @@ async function saveConfiguration() {
 
 async function startConversation() {
   const topic = elements.topicInput.value.trim();
-  
+
   if (!topic) {
     showToast('⚠️ Please enter a topic', 'error');
     elements.topicInput.focus();
     return;
   }
-  
+
   // Generate prompt if template is selected, otherwise use topic directly
   let initialPrompt = topic;
   if (selectedTemplate && promptGenerators[selectedTemplate]) {
     initialPrompt = promptGenerators[selectedTemplate](topic);
   }
-  
+
   // Store in hidden textarea for consistency
   elements.initialPrompt.value = initialPrompt;
-  
+
   elements.startBtn.disabled = true;
   elements.startBtn.innerHTML = '<svg class="btn-icon w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Starting...';
-  
+
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'START_CONVERSATION',
       initialPrompt: initialPrompt
     });
-    
+
     if (response.success) {
       showToast('🚀 Conversation started!', 'success');
       // Clear input after starting
@@ -574,7 +682,7 @@ async function startConversation() {
     console.error('[Side Panel] Failed to start:', error);
     showToast('❌ Failed to start', 'error');
   }
-  
+
   // Reset button
   setTimeout(() => {
     elements.startBtn.innerHTML = '<svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Send';
@@ -586,16 +694,16 @@ async function startConversation() {
 async function stopConversation() {
   try {
     await chrome.runtime.sendMessage({ type: 'STOP_CONVERSATION' });
-    
+
     // Immediately update UI
     wasActive = false;
     elements.globalStatus.className = 'status-badge';
     elements.globalStatus.querySelector('.status-label').textContent = 'Inactive';
-    elements.turnIndicator.innerHTML = '<svg class="inline w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10h6v4H9z"></path></svg> Stopped';
+    elements.turnIndicator.innerHTML = '<svg class="inline w-2 h-2 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10h6v4H9z"></path></svg> Stopped';
     elements.turnIndicator.classList.remove('active');
     elements.startBtn.disabled = false;
     elements.stopBtn.disabled = true;
-    
+
     showToast('⏹️ Conversation stopped', 'success');
   } catch (error) {
     console.error('[Side Panel] Failed to stop:', error);
@@ -605,7 +713,7 @@ async function stopConversation() {
 
 async function clearHistory() {
   if (!confirm('Clear all conversation history?')) return;
-  
+
   try {
     await chrome.runtime.sendMessage({ type: 'CLEAR_HISTORY' });
     lastRenderedCount = 0; // Reset render counter
@@ -632,9 +740,9 @@ function renderConversationHistory(history) {
     lastRenderedCount = 0;
     return;
   }
-  
+
   elements.messageCount.textContent = history.length;
-  
+
   // Check if we need full re-render or just append
   if (lastRenderedCount === 0 || history.length < lastRenderedCount) {
     // Full re-render
@@ -649,7 +757,7 @@ function renderConversationHistory(history) {
       div.innerHTML = createMessageHTML(msg, true);
       const newElement = div.firstElementChild;
       elements.conversationHistory.appendChild(newElement);
-      
+
       // Remove 'new' class after animation ends
       setTimeout(() => {
         newElement.classList.remove('new');
@@ -657,9 +765,9 @@ function renderConversationHistory(history) {
     });
   }
   // If same count, do nothing (avoid unnecessary re-renders)
-  
+
   lastRenderedCount = history.length;
-  
+
   // Auto-scroll
   if (elements.autoScroll.checked) {
     elements.conversationHistory.scrollTop = elements.conversationHistory.scrollHeight;
@@ -669,11 +777,11 @@ function renderConversationHistory(history) {
 function createMessageHTML(msg, isNew) {
   const agentClass = msg.sessionNum === 1 ? 'agent-a' : 'agent-b';
   const newClass = isNew ? 'new' : '';
-  const time = new Date(msg.timestamp).toLocaleTimeString('vi-VN', { 
-    hour: '2-digit', 
-    minute: '2-digit' 
+  const time = new Date(msg.timestamp).toLocaleTimeString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit'
   });
-  
+
   return `
     <div class="message-item ${agentClass} ${newClass}" data-id="${msg.id}">
       <div class="message-meta">
@@ -695,12 +803,12 @@ function escapeHtml(text) {
 function showToast(message, type = 'success') {
   const existing = document.querySelector('.toast');
   if (existing) existing.remove();
-  
+
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
   toast.textContent = message;
   document.body.appendChild(toast);
-  
+
   setTimeout(() => toast.remove(), 2500);
 }
 
@@ -728,12 +836,17 @@ async function checkServiceWorkerStatus() {
   }
 }
 
+// Store all logs for filtering
+let allLogs = [];
+let currentFilter = 'ALL'; // Current filter level: ALL, ERROR, WARN, INFO, DEBUG
+
 const debugElements = {
   refreshLogs: document.getElementById('refresh-logs'),
   downloadLogs: document.getElementById('download-logs'),
   clearLogs: document.getElementById('clear-logs'),
   logContainer: document.getElementById('log-container'),
-  logCount: document.getElementById('log-count')
+  logCount: document.getElementById('log-count'),
+  filterButtons: document.querySelectorAll('.filter-btn')
 };
 
 // Debug panel is now handled by tab system
@@ -750,20 +863,36 @@ if (debugElements.clearLogs) {
   debugElements.clearLogs.addEventListener('click', clearLogs);
 }
 
+// Filter button event listeners
+if (debugElements.filterButtons && debugElements.filterButtons.length > 0) {
+  debugElements.filterButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      // Remove active class from all buttons
+      debugElements.filterButtons.forEach(b => b.classList.remove('active'));
+      // Add active class to clicked button
+      btn.classList.add('active');
+      // Update current filter
+      currentFilter = btn.dataset.filter;
+      // Re-render logs with new filter
+      renderFilteredLogs();
+    });
+  });
+}
+
 // Test log button
 const testLogBtn = document.getElementById('test-log');
 if (testLogBtn) {
   testLogBtn.addEventListener('click', async () => {
     try {
       console.log('[Side Panel] Creating test log...');
-      
+
       // Check if extension is available
       if (!chrome.runtime || !chrome.runtime.id) {
         console.error('[Side Panel] Extension runtime not available');
         showToast('❌ Extension runtime not available', 'error');
         return;
       }
-      
+
       const testMessage = `Test log created at ${new Date().toISOString()}`;
       const response = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({
@@ -783,7 +912,7 @@ if (testLogBtn) {
           resolve(response);
         });
       });
-      
+
       console.log('[Side Panel] ADD_LOG response:', response);
       console.log('[Side Panel] Test log created, refreshing...');
       showToast('🧪 Test log created', 'success');
@@ -801,7 +930,7 @@ if (testLogBtn) {
 async function refreshLogs() {
   try {
     console.log('[Side Panel] Refresh logs requested');
-    
+
     // Check if extension is available
     if (!chrome.runtime || !chrome.runtime.id) {
       console.error('[Side Panel] Extension runtime not available');
@@ -813,7 +942,7 @@ async function refreshLogs() {
       debugElements.logCount.textContent = '0 logs';
       return;
     }
-    
+
     // Check service worker status
     const swStatus = await checkServiceWorkerStatus();
     if (!swStatus.available) {
@@ -831,7 +960,7 @@ async function refreshLogs() {
       return;
     }
     console.log('[Side Panel] Service worker is available');
-    
+
     const response = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ type: 'GET_LOGS' }, (response) => {
         if (chrome.runtime.lastError) {
@@ -842,9 +971,9 @@ async function refreshLogs() {
         resolve(response);
       });
     });
-    
+
     console.log('[Side Panel] GET_LOGS response:', response);
-    
+
     if (!response) {
       console.error('[Side Panel] No response from GET_LOGS');
       debugElements.logContainer.innerHTML = `
@@ -858,10 +987,10 @@ async function refreshLogs() {
       debugElements.logCount.textContent = '0 logs';
       return;
     }
-    
-    const logs = response.logs || [];
-    console.log('[Side Panel] Logs received:', logs.length, 'entries');
-    
+
+    allLogs = response.logs || [];
+    console.log('[Side Panel] Logs received:', allLogs.length, 'entries');
+
     // Check storage usage
     let storageInfo = null;
     try {
@@ -879,105 +1008,142 @@ async function refreshLogs() {
     } catch (e) {
       console.warn('[Side Panel] Failed to get storage usage:', e);
     }
-    
-    debugElements.logCount.textContent = `${logs.length} logs${storageInfo ? ` (${storageInfo.usagePercent}% storage)` : ''}`;
-    
-    if (logs.length === 0) {
-      let errorMsg = 'No logs yet. Service worker may not have started.';
-      if (storageInfo && parseFloat(storageInfo.usagePercent) > 90) {
-        errorMsg = 'Storage may be full. Try clicking "Clear" to free up space.';
-      }
-      debugElements.logContainer.innerHTML = `
-        <div class="empty-state">
-          <p>${errorMsg}</p>
-          <p style="font-size: 0.9em; color: #888; margin-top: 0.5em;">
-            ${storageInfo ? `Storage: ${storageInfo.usagePercent}% used (${(storageInfo.usage / 1024).toFixed(1)} KB / ${(storageInfo.quota / 1024).toFixed(1)} KB)` : ''}<br/>
-            Try reloading the extension or check the service worker console.
-          </p>
-        </div>
-      `;
-      return;
-    }
-    
-    // Show last 100 logs (most recent first)
-    const recentLogs = logs.slice(-100).reverse();
-    
-    debugElements.logContainer.innerHTML = recentLogs.map(log => {
-      const levelClass = log.level.toLowerCase();
-      const time = new Date(log.timestamp).toLocaleTimeString('vi-VN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      });
-      
-      return `
-        <div class="log-entry ${levelClass}">
-          <span class="log-time">${time}</span>
-          <span class="log-level">${log.level}</span>
-          <span class="log-source">${escapeHtml(log.source)}</span>
-          <span class="log-message">${escapeHtml(log.message)}</span>
-        </div>
-      `;
-    }).join('');
-    
-    showToast(`🔄 Loaded ${logs.length} logs`, 'success');
+
+    // Render filtered logs
+    renderFilteredLogs(storageInfo);
+
+    showToast(`🔄 Loaded ${allLogs.length} logs`, 'success');
   } catch (error) {
     console.error('[Side Panel] Failed to load logs:', error);
     showToast('❌ Failed to load logs', 'error');
   }
 }
 
+// Render logs with current filter
+function renderFilteredLogs(storageInfo = null) {
+  // Filter logs based on current filter
+  let filteredLogs = allLogs;
+  if (currentFilter !== 'ALL') {
+    filteredLogs = allLogs.filter(log => log.level === currentFilter);
+  }
+
+  // Update log count
+  const totalCount = allLogs.length;
+  const filteredCount = filteredLogs.length;
+  const countText = currentFilter === 'ALL'
+    ? `${totalCount} logs`
+    : `${filteredCount} of ${totalCount} logs (${currentFilter})`;
+  debugElements.logCount.textContent = `${countText}${storageInfo ? ` (${storageInfo.usagePercent}% storage)` : ''}`;
+
+  if (filteredLogs.length === 0) {
+    let errorMsg = currentFilter === 'ALL'
+      ? 'No logs yet. Service worker may not have started.'
+      : `No ${currentFilter} logs found.`;
+    if (storageInfo && parseFloat(storageInfo.usagePercent) > 90) {
+      errorMsg = 'Storage may be full. Try clicking "Clear" to free up space.';
+    }
+    debugElements.logContainer.innerHTML = `
+      <div class="empty-state">
+        <p>${errorMsg}</p>
+        ${currentFilter !== 'ALL' ? `<p style="font-size: 0.9em; color: #888; margin-top: 0.5em;">Try selecting "All" to see all logs.</p>` : ''}
+        ${storageInfo ? `<p style="font-size: 0.9em; color: #888; margin-top: 0.5em;">Storage: ${storageInfo.usagePercent}% used (${(storageInfo.usage / 1024).toFixed(1)} KB / ${(storageInfo.quota / 1024).toFixed(1)} KB)</p>` : ''}
+      </div>
+    `;
+    return;
+  }
+
+  // Show last 100 logs (most recent first)
+  const recentLogs = filteredLogs.slice(-100).reverse();
+
+  debugElements.logContainer.innerHTML = recentLogs.map(log => {
+    const levelClass = log.level.toLowerCase();
+    const time = new Date(log.timestamp).toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+
+    return `
+      <div class="log-entry ${levelClass}">
+        <span class="log-time">${time}</span>
+        <span class="log-level">${log.level}</span>
+        <span class="log-source">${escapeHtml(log.source)}</span>
+        <span class="log-message">${escapeHtml(log.message)}</span>
+      </div>
+    `;
+  }).join('');
+}
+
 async function downloadLogs() {
   try {
     console.log('[Side Panel] Download logs requested');
-    
+
     // Check if extension is available
     if (!chrome.runtime || !chrome.runtime.id) {
       console.error('[Side Panel] Extension runtime not available');
       showToast('❌ Extension runtime not available', 'error');
       return;
     }
-    
-    const response = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ type: 'GET_LOGS' }, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error('[Side Panel] GET_LOGS error:', chrome.runtime.lastError.message);
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        resolve(response);
+
+    // Use filtered logs if available, otherwise fetch from background
+    let logsToDownload = [];
+    if (allLogs.length > 0) {
+      // Use cached logs with current filter
+      if (currentFilter === 'ALL') {
+        logsToDownload = allLogs;
+      } else {
+        logsToDownload = allLogs.filter(log => log.level === currentFilter);
+      }
+    } else {
+      // Fetch from background if not cached
+      const response = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: 'GET_LOGS' }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('[Side Panel] GET_LOGS error:', chrome.runtime.lastError.message);
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(response);
+        });
       });
-    });
-    
-    console.log('[Side Panel] GET_LOGS response:', response);
-    
-    if (!response) {
-      console.error('[Side Panel] No response from GET_LOGS');
-      showToast('❌ No response from extension. Service worker may not be running.', 'error');
-      return;
+
+      if (!response) {
+        console.error('[Side Panel] No response from GET_LOGS');
+        showToast('❌ No response from extension. Service worker may not be running.', 'error');
+        return;
+      }
+
+      allLogs = response.logs || [];
+
+      // Apply filter
+      if (currentFilter === 'ALL') {
+        logsToDownload = allLogs;
+      } else {
+        logsToDownload = allLogs.filter(log => log.level === currentFilter);
+      }
     }
-    
-    const logs = response.logs || [];
-    console.log('[Side Panel] Logs received:', logs.length, 'entries');
-    
-    if (logs.length === 0) {
+
+    console.log('[Side Panel] Logs to download:', logsToDownload.length, 'entries');
+
+    if (logsToDownload.length === 0) {
       console.warn('[Side Panel] No logs to download');
-      showToast('⚠️ No logs to download. Try clicking "Refresh" first.', 'error');
+      showToast(`⚠️ No ${currentFilter === 'ALL' ? '' : currentFilter + ' '}logs to download. Try clicking "Refresh" first.`, 'error');
       return;
     }
-    
+
     // Format logs as text
-    const lines = logs.map(log => 
+    const lines = logsToDownload.map(log =>
       `[${log.timestamp}] [${log.level}] [${log.source}] ${log.message}`
     );
     const content = lines.join('\n');
     console.log('[Side Panel] Formatted log content length:', content.length);
-    
-    // Create download
-    const filename = `ai-bridge-logs-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.log`;
+
+    // Create download filename with filter info
+    const filterSuffix = currentFilter === 'ALL' ? '' : `-${currentFilter}`;
+    const filename = `ai-bridge-logs${filterSuffix}-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.log`;
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
-    
+
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
@@ -985,9 +1151,9 @@ async function downloadLogs() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
+
     console.log('[Side Panel] Download completed:', filename);
-    showToast(`📥 Downloaded ${filename} (${logs.length} logs)`, 'success');
+    showToast(`📥 Downloaded ${filename} (${logsToDownload.length} ${currentFilter === 'ALL' ? 'logs' : currentFilter + ' logs'})`, 'success');
   } catch (error) {
     console.error('[Side Panel] Failed to download logs:', error);
     showToast('❌ Failed to download: ' + error.message, 'error');
@@ -996,9 +1162,20 @@ async function downloadLogs() {
 
 async function clearLogs() {
   if (!confirm('Clear all debug logs?')) return;
-  
+
   try {
     await chrome.runtime.sendMessage({ type: 'CLEAR_LOGS' });
+    // Clear cached logs
+    allLogs = [];
+    // Reset filter to ALL
+    currentFilter = 'ALL';
+    debugElements.filterButtons.forEach(btn => {
+      btn.classList.remove('active');
+      if (btn.dataset.filter === 'ALL') {
+        btn.classList.add('active');
+      }
+    });
+    // Clear display
     debugElements.logContainer.innerHTML = `
       <div class="empty-state">
         <p>Logs cleared</p>
@@ -1019,10 +1196,10 @@ async function clearLogs() {
 async function swapAgents() {
   const btn = document.getElementById('swap-agents-btn');
   if (btn) btn.disabled = true;
-  
+
   try {
     const response = await chrome.runtime.sendMessage({ type: 'SWAP_AGENTS' });
-    
+
     if (response && response.success) {
       showToast('⇄ Agents swapped!', 'success');
       // Reload state
@@ -1055,20 +1232,43 @@ async function loadAvailableAgents() {
   }
 }
 
-function renderAvailableAgents(agents) {
-  const listContainer = document.getElementById('available-agents-list');
-  if (!listContainer) return;
-  
-  if (!agents || agents.length === 0) {
-    listContainer.innerHTML = `
-      <div class="empty-state">
-        <p>No agents available</p>
-        <p class="empty-hint">Open chat tabs to see them here</p>
-      </div>
-    `;
-    return;
-  }
-  
+// Update agent selectors with available agents
+function updateAgentSelectors() {
+  // Get all selectors dynamically (they're created in renderParticipants)
+  const selectors = document.querySelectorAll('.agent-selector');
+
+  if (selectors.length === 0) return;
+
+  // Get current state to know which agents are already assigned
+  chrome.runtime.sendMessage({ type: 'GET_STATE' }).then(state => {
+    // Always use GET_AVAILABLE_AGENTS to get agents from pool
+    chrome.runtime.sendMessage({ type: 'GET_AVAILABLE_AGENTS' }).then(availResponse => {
+      if (availResponse && availResponse.success) {
+        const participants = state?.participants || [];
+        const assignedTabIds = participants.map(p => p.tabId).filter(Boolean);
+
+        // Update each selector
+        selectors.forEach(selector => {
+          const position = parseInt(selector.dataset.position);
+          // For empty slots (when position > participants.length), currentTabId is null
+          const participant = participants[position - 1];
+          const currentTabId = participant?.tabId || null;
+          updateSelector(selector, availResponse.agents, currentTabId, assignedTabIds);
+        });
+      } else {
+        console.error('[Side Panel] Failed to get available agents for selectors');
+      }
+    }).catch(error => {
+      console.error('[Side Panel] Error getting available agents:', error);
+    });
+  }).catch(error => {
+    console.error('[Side Panel] Error getting state:', error);
+  });
+}
+
+function updateSelector(selector, agents, currentTabId, assignedTabIds) {
+  if (!selector) return;
+
   const platformIconsMap = {
     gemini: '✨',
     chatgpt: '🤖',
@@ -1076,12 +1276,59 @@ function renderAvailableAgents(agents) {
     duckduckgo: '🦆',
     unknown: '❓'
   };
-  
+
+  // Clear and add default option
+  selector.innerHTML = '<option value="">Select agent...</option>';
+
+  // Add available agents
+  agents.forEach(agent => {
+    if (assignedTabIds.includes(agent.tabId) && agent.tabId !== currentTabId) {
+      return; // Skip if assigned to other slot
+    }
+
+    const icon = platformIconsMap[agent.platform] || platformIconsMap.unknown;
+    const title = agent.title || `${agent.platform} Chat`;
+    const option = document.createElement('option');
+    option.value = agent.tabId;
+    option.textContent = `${icon} ${title} (${agent.platform})`;
+    option.selected = agent.tabId === currentTabId;
+    selector.appendChild(option);
+  });
+
+  // Enable/disable based on whether agent is selected
+  selector.disabled = !!currentTabId;
+}
+
+function renderAvailableAgents(agents) {
+  const listContainer = document.getElementById('available-agents-list');
+  if (!listContainer) return;
+
+  // Also update selectors when agents list changes
+  updateAgentSelectors();
+
+  if (!agents || agents.length === 0) {
+    listContainer.innerHTML = `
+      <div class="empty-state">
+        <p>No agents available</p>
+        <p class="empty-hint">Open chat tabs (ChatGPT, Gemini, etc.) to see them here</p>
+      </div>
+    `;
+    return;
+  }
+
+  const platformIconsMap = {
+    gemini: '✨',
+    chatgpt: '🤖',
+    deepseek: '🔍',
+    duckduckgo: '🦆',
+    unknown: '❓'
+  };
+
   listContainer.innerHTML = agents.map(agent => {
     const icon = platformIconsMap[agent.platform] || platformIconsMap.unknown;
     const platformName = agent.platform ? agent.platform.charAt(0).toUpperCase() + agent.platform.slice(1) : 'Unknown';
     const title = agent.title || `${platformName} Chat`;
-    
+
     return `
       <div class="available-agent-item" data-tab-id="${agent.tabId}">
         <div class="agent-info">
@@ -1092,12 +1339,6 @@ function renderAvailableAgents(agents) {
           </div>
         </div>
         <div class="agent-actions">
-          <button class="btn-assign btn-assign-a" data-tab-id="${agent.tabId}" data-slot="1" title="Assign to Agent A">
-            A
-          </button>
-          <button class="btn-assign btn-assign-b" data-tab-id="${agent.tabId}" data-slot="2" title="Assign to Agent B">
-            B
-          </button>
           <button class="btn-remove" data-tab-id="${agent.tabId}" title="Remove from pool">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -1107,34 +1348,80 @@ function renderAvailableAgents(agents) {
       </div>
     `;
   }).join('');
-  
-  // Add event listeners
-  listContainer.querySelectorAll('.btn-assign').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const tabId = parseInt(btn.dataset.tabId);
-      const sessionNum = parseInt(btn.dataset.slot);
-      await assignAgentToSlot(tabId, sessionNum);
+
+  listContainer.querySelectorAll('.available-agent-item').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      // Ignore if clicked on remove button
+      if (e.target.closest('.btn-remove')) return;
+
+      const tabId = parseInt(item.dataset.tabId);
+      console.log('[Side Panel] Clicked agent:', tabId);
+
+      try {
+        // Get current state to find an empty slot
+        const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
+        const participants = state.participants || [];
+
+        let targetPosition = -1;
+
+        // 1. Look for first empty slot (no tabId)
+        for (let i = 0; i < participants.length; i++) {
+          if (!participants[i].tabId) {
+            targetPosition = participants[i].order || (i + 1);
+            break;
+          }
+        }
+
+        // 2. If no empty slot, add a new one
+        if (targetPosition === -1) {
+          console.log('[Side Panel] No empty slot, creating new one...');
+          const newPos = participants.length + 1;
+          // Add empty participant first
+          await chrome.runtime.sendMessage({
+            type: 'ADD_EMPTY_PARTICIPANT',
+            position: newPos
+          });
+          targetPosition = newPos;
+          // Wait a tiny bit for state update to propagate internally in background
+          await new Promise(r => setTimeout(r, 100));
+        }
+
+        // 3. Assign agent to the slot
+        console.log('[Side Panel] Assigning agent', tabId, 'to position', targetPosition);
+        assignAgentToSlot(tabId, targetPosition);
+
+      } catch (error) {
+        console.error('[Side Panel] Failed to auto-assign agent:', error);
+        showToast('❌ Failed to add agent', 'error');
+      }
     });
   });
-  
+
   listContainer.querySelectorAll('.btn-remove').forEach(btn => {
     btn.addEventListener('click', async (e) => {
+      e.stopPropagation(); // Prevent item click
       const tabId = parseInt(btn.dataset.tabId);
       await removeAgentFromPool(tabId);
     });
   });
 }
 
-async function assignAgentToSlot(tabId, sessionNum) {
+async function assignAgentToSlot(tabId, position) {
+  if (!tabId) {
+    // If tabId is empty, release the slot
+    await releaseAgentFromSlot(position);
+    return;
+  }
+
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'ASSIGN_AGENT_TO_SLOT',
-      tabId: tabId,
-      sessionNum: sessionNum
+      tabId: parseInt(tabId),
+      position: position
     });
-    
+
     if (response && response.success) {
-      showToast(`✅ Assigned to Agent ${sessionNum === 1 ? 'A' : 'B'}`, 'success');
+      showToast(`✅ Agent assigned to position ${position}`, 'success');
       // Reload state and agents
       setTimeout(() => {
         loadStateOnly();
@@ -1142,22 +1429,26 @@ async function assignAgentToSlot(tabId, sessionNum) {
       }, 500);
     } else {
       showToast('❌ Failed to assign agent', 'error');
+      // Reset selector
+      updateAgentSelectors();
     }
   } catch (error) {
     console.error('[Side Panel] Assign error:', error);
     showToast('❌ Failed to assign agent', 'error');
+    // Reset selector
+    updateAgentSelectors();
   }
 }
 
 async function removeAgentFromPool(tabId) {
   if (!confirm('Remove this agent from the pool?')) return;
-  
+
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'REMOVE_AGENT_FROM_POOL',
       tabId: tabId
     });
-    
+
     if (response && response.success) {
       showToast('🗑️ Agent removed', 'success');
       loadAvailableAgents();
@@ -1170,17 +1461,20 @@ async function removeAgentFromPool(tabId) {
   }
 }
 
-async function releaseAgentFromSlot(sessionNum) {
-  if (!confirm(`Release Agent ${sessionNum === 1 ? 'A' : 'B'} back to the available agents pool?`)) return;
-  
+async function releaseAgentFromSlot(position) {
   try {
     const response = await chrome.runtime.sendMessage({
-      type: 'UNREGISTER_SESSION',
-      sessionNum: sessionNum
+      type: 'REMOVE_PARTICIPANT',
+      position: position
     });
-    
+
     if (response && response.success) {
-      showToast(`✅ Agent ${sessionNum === 1 ? 'A' : 'B'} released`, 'success');
+      showToast(`✅ Participant ${position} released`, 'success');
+      // Reload state and agents
+      setTimeout(() => {
+        loadStateOnly();
+        loadAvailableAgents();
+      }, 500);
       // Reload state and agents
       setTimeout(() => {
         loadStateOnly();

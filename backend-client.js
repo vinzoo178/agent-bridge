@@ -1,55 +1,55 @@
 // Backend WebSocket Client for Extension
 // Connects extension to backend server
 
-(function() {
+(function () {
   'use strict';
-  
+
   const BACKEND_URL = 'ws://localhost:3000/ws/extension';
-  const RECONNECT_DELAY = 3000;
-  const MAX_RECONNECT_ATTEMPTS = 10;
-  
+  const INITIAL_RECONNECT_DELAY = 3000;
+  const MAX_RECONNECT_DELAY = 30000;
+
   let ws = null;
-  let reconnectAttempts = 0;
+  let reconnectDelay = INITIAL_RECONNECT_DELAY;
   let reconnectTimeout = null;
   let isConnecting = false;
   let extensionId = null;
-  
+
   // ============================================
   // WEBSOCKET CONNECTION
   // ============================================
-  
+
   function connect() {
     if (isConnecting || (ws && ws.readyState === WebSocket.OPEN)) {
       return;
     }
-    
+
     isConnecting = true;
     console.log('[Backend Client] Connecting to backend...');
-    
+
     // Notify background that we're connecting
     if (typeof chrome !== 'undefined' && chrome.runtime) {
-      chrome.runtime.sendMessage({ 
+      chrome.runtime.sendMessage({
         type: 'BACKEND_STATUS_UPDATE',
         status: { connected: false, status: 'connecting' }
-      }).catch(() => {});
+      }).catch(() => { });
     }
-    
+
     try {
       ws = new WebSocket(BACKEND_URL);
-      
+
       ws.onopen = () => {
         console.log('[Backend Client] ✅ Connected to backend');
         isConnecting = false;
-        reconnectAttempts = 0;
+        reconnectDelay = INITIAL_RECONNECT_DELAY;
         // Notify background if in extension context
         if (typeof chrome !== 'undefined' && chrome.runtime) {
-          chrome.runtime.sendMessage({ 
+          chrome.runtime.sendMessage({
             type: 'BACKEND_CONNECTED',
             extensionId: extensionId
-          }).catch(() => {});
+          }).catch(() => { });
         }
       };
-      
+
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
@@ -58,78 +58,98 @@
           console.error('[Backend Client] Error parsing message:', error);
         }
       };
-      
+
       ws.onerror = (error) => {
-        console.error('[Backend Client] WebSocket error:', error);
+        // WebSocket error event doesn't have much detail
+        // Use console.warn instead of error to avoid cluttering Extension Errors page
+        // during normal reconnection attempts
+        const errorDetails = {
+          message: 'WebSocket connection error (Server likely offline)',
+          target: BACKEND_URL,
+          readyState: ws?.readyState
+        };
+
+        console.warn('[Backend Client] WebSocket connection issue:', errorDetails.message);
+
         isConnecting = false;
+
+        // Notify background of connection error
+        sendToBackground({
+          type: 'BACKEND_STATUS_UPDATE',
+          status: {
+            connected: false,
+            status: 'error',
+            error: `WebSocket error: ${errorDetails.message}. Is backend server running at ${BACKEND_URL}?`
+          }
+        });
       };
-      
+
       ws.onclose = (event) => {
         console.log('[Backend Client] Disconnected from backend, code:', event.code, 'reason:', event.reason);
         isConnecting = false;
         sendToBackground({ type: 'BACKEND_DISCONNECTED' });
-        
-        // Attempt reconnect
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-          reconnectAttempts++;
-          console.log(`[Backend Client] Reconnecting in ${RECONNECT_DELAY}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-          reconnectTimeout = setTimeout(connect, RECONNECT_DELAY);
-        } else {
-          console.error('[Backend Client] Max reconnect attempts reached. Will retry when manually triggered.');
-          sendToBackground({ 
-            type: 'BACKEND_STATUS_UPDATE',
-            status: { 
-              connected: false, 
-              status: 'disconnected',
-              error: 'Max reconnect attempts reached. Please check if backend server is running at localhost:3000'
-            }
-          });
-        }
+
+        // Attempt reconnect with backoff
+        console.log(`[Backend Client] Reconnecting in ${reconnectDelay}ms...`);
+        reconnectTimeout = setTimeout(connect, reconnectDelay);
+
+        // Increase delay for next time (cap at MAX_RECONNECT_DELAY)
+        reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
+
+        // Notify background of status
+        sendToBackground({
+          type: 'BACKEND_STATUS_UPDATE',
+          status: {
+            connected: false,
+            status: 'disconnected',
+            error: `Disconnected. Reconnecting in ${Math.round(reconnectDelay / 1000)}s...`
+          }
+        });
       };
-      
+
     } catch (error) {
       console.error('[Backend Client] Connection error:', error);
       isConnecting = false;
     }
   }
-  
+
   // ============================================
   // MESSAGE HANDLING
   // ============================================
-  
+
   function handleBackendMessage(message) {
     console.log('[Backend Client] Received from backend:', message.type);
-    
+
     switch (message.type) {
       case 'CONNECTION_ESTABLISHED':
         extensionId = message.extensionId;
         console.log('[Backend Client] Extension ID:', extensionId);
-        sendToBackground({ 
+        sendToBackground({
           type: 'BACKEND_CONNECTED',
           extensionId: extensionId
         });
         break;
-      
+
       case 'CLIENT_MESSAGE':
         // Backend wants us to send a message to AI chat
         handleClientMessage(message);
         break;
-      
+
       case 'PONG':
         // Heartbeat response
         break;
-      
+
       default:
         console.warn('[Backend Client] Unknown message type:', message.type);
     }
   }
-  
+
   async function handleClientMessage(message) {
     const { requestId, conversationId, message: text } = message;
-    
+
     console.log('[Backend Client] Processing client message:', requestId);
     console.log('[Backend Client] Message type:', typeof text, 'value:', text);
-    
+
     // Ensure message is a string
     let messageText = text;
     if (typeof text !== 'string') {
@@ -146,43 +166,43 @@
         messageText = String(text);
       }
     }
-    
+
     if (!messageText || messageText.trim().length === 0) {
       sendErrorToBackend(requestId, 'Message is empty or invalid');
       return;
     }
-    
+
     console.log('[Backend Client] Final message text:', messageText.substring(0, 100));
-    
+
     try {
       // Get available session directly from background
       const sessionResponse = await chrome.runtime.sendMessage({ type: 'GET_AVAILABLE_SESSION' });
-      
+
       console.log('[Backend Client] Available session response:', JSON.stringify(sessionResponse));
-      
+
       if (!sessionResponse) {
         sendErrorToBackend(requestId, 'Failed to get session information');
         return;
       }
-      
+
       if (!sessionResponse.available || !sessionResponse.sessionNum) {
         console.warn('[Backend Client] No session available, trying auto-register...');
-        
+
         // Try to trigger auto-registration
         try {
           await chrome.runtime.sendMessage({ type: 'AUTO_REGISTER_TABS' });
           console.log('[Backend Client] Auto-register triggered, waiting 2s...');
           await new Promise(resolve => setTimeout(resolve, 2000));
-          
+
           // Try again
           const retryResponse = await chrome.runtime.sendMessage({ type: 'GET_AVAILABLE_SESSION' });
           console.log('[Backend Client] Retry response:', JSON.stringify(retryResponse));
-          
+
           if (retryResponse && retryResponse.available && retryResponse.sessionNum) {
             console.log('[Backend Client] Session found after auto-register!');
             // Continue with retryResponse
             const sessionNum = retryResponse.sessionNum;
-            
+
             const sendResult = await chrome.runtime.sendMessage({
               type: 'SEND_TO_SESSION',
               sessionNum: sessionNum,
@@ -190,19 +210,19 @@
               requestId: requestId,
               conversationId: conversationId
             });
-            
+
             if (!sendResult || !sendResult.success) {
               sendErrorToBackend(requestId, sendResult.error || 'Failed to send message to chat');
               return;
             }
-            
+
             console.log('[Backend Client] Message sent to session', sessionNum, ', waiting for response...');
             return; // Success!
           }
         } catch (autoRegError) {
           console.error('[Backend Client] Auto-register failed:', autoRegError);
         }
-        
+
         // If still no session, return error
         console.error('[Backend Client] No session available after retry. Response:', JSON.stringify(sessionResponse));
         const errorMsg = 'No registered session available. Please register as Agent A or B first. ' +
@@ -211,10 +231,10 @@
         sendErrorToBackend(requestId, errorMsg);
         return;
       }
-      
+
       const sessionNum = sessionResponse.sessionNum;
       console.log('[Backend Client] Using session:', sessionNum, 'tabId:', sessionResponse.tabId, 'platform:', sessionResponse.platform);
-      
+
       // Send message via background script (which will forward to content script)
       const sendResult = await chrome.runtime.sendMessage({
         type: 'SEND_TO_SESSION',
@@ -223,33 +243,33 @@
         requestId: requestId,
         conversationId: conversationId
       });
-      
+
       if (!sendResult || !sendResult.success) {
         sendErrorToBackend(requestId, sendResult.error || 'Failed to send message to chat');
         return;
       }
-      
+
       console.log('[Backend Client] Message sent to session', sessionNum, ', waiting for response...');
-      
+
       // Response will be sent via content script -> background -> backend client
       // We'll handle it in the message listener below
-      
+
     } catch (error) {
       console.error('[Backend Client] Error handling client message:', error);
       sendErrorToBackend(requestId, error.message);
     }
   }
-  
+
   // ============================================
   // SEND TO BACKEND
   // ============================================
-  
+
   function sendToBackend(message) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       console.error('[Backend Client] Cannot send - not connected');
       return false;
     }
-    
+
     try {
       ws.send(JSON.stringify(message));
       return true;
@@ -258,7 +278,7 @@
       return false;
     }
   }
-  
+
   function sendErrorToBackend(requestId, error) {
     sendToBackend({
       type: 'ERROR',
@@ -266,7 +286,7 @@
       error: error
     });
   }
-  
+
   function sendResponseToBackend(requestId, response) {
     sendToBackend({
       type: 'AI_RESPONSE',
@@ -274,18 +294,18 @@
       response: response
     });
   }
-  
+
   // Helper to send message to background (if available)
   function sendToBackground(message) {
     if (typeof chrome !== 'undefined' && chrome.runtime) {
-      chrome.runtime.sendMessage(message).catch(() => {});
+      chrome.runtime.sendMessage(message).catch(() => { });
     }
   }
-  
+
   // ============================================
   // LISTEN TO BACKGROUND MESSAGES
   // ============================================
-  
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'AI_RESPONSE_FOR_BACKEND') {
       // Background received AI response and wants to send to backend
@@ -294,7 +314,7 @@
       sendResponse({ success: true });
       return true;
     }
-    
+
     if (message.type === 'BACKEND_SEND_MESSAGE') {
       // Manual send to backend (for testing)
       sendToBackend(message.data);
@@ -302,21 +322,21 @@
       return true;
     }
   });
-  
+
   // ============================================
   // INITIALIZE
   // ============================================
-  
+
   // Connect on startup
   connect();
-  
+
   // Also listen for connect command from background
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'BACKEND_CONNECT') {
       connect();
     }
   });
-  
+
   // Expose for debugging
   window.BackendClient = {
     connect,
@@ -331,8 +351,8 @@
       extensionId: extensionId
     })
   };
-  
+
   console.log('[Backend Client] Initialized');
-  
+
 })();
 

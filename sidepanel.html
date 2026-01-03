@@ -4,25 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Chat Bridge</title>
-  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="styles/sidepanel.css">
-  <style>
-    /* Tailwind config for dark theme */
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            'bg-primary': '#0a0a12',
-            'bg-secondary': '#12121f',
-            'bg-tertiary': '#1a1a2e',
-            'accent-primary': '#6366f1',
-            'accent-secondary': '#8b5cf6',
-          }
-        }
-      }
-    }
-  </style>
 </head>
 <body>
   <div class="container">
@@ -172,60 +154,35 @@
 
       <!-- Sessions Tab Page -->
       <section class="tab-page" id="sessions-tab-page">
-        <div class="sessions-grid">
-          <!-- Session 1 -->
-          <div class="session-card" id="session1-card">
-            <div class="session-header">
-              <span class="session-label">Agent A</span>
-              <span class="session-status disconnected" id="session1-status">Disconnected</span>
+        <!-- Conversation Participants Section -->
+        <div class="participants-section">
+          <div class="section-header">
+            <div>
+              <h3 class="section-title">Conversation Participants</h3>
+              <p class="section-subtitle">These agents will participate in the chat (order matters)</p>
             </div>
-            <div class="session-platform" id="session1-platform">
-              <span class="platform-icon">—</span>
-              <span>Not connected</span>
-            </div>
-            <button class="btn-release" id="release-session1-btn" style="display:none;" title="Release agent back to pool">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-              </svg>
-              Release
-            </button>
+
           </div>
           
-          <!-- Session 2 -->
-          <div class="session-card" id="session2-card">
-            <div class="session-header">
-              <span class="session-label">Agent B</span>
-              <span class="session-status disconnected" id="session2-status">Disconnected</span>
-            </div>
-            <div class="session-platform" id="session2-platform">
-              <span class="platform-icon">—</span>
-              <span>Not connected</span>
-            </div>
-            <button class="btn-release" id="release-session2-btn" style="display:none;" title="Release agent back to pool">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-              </svg>
-              Release
-            </button>
+          <div class="conversation-flow" id="participants-container">
+            <!-- Participants will be dynamically rendered here -->
           </div>
-        </div>
-        
-        <div class="session-controls">
-          <button class="btn btn-secondary btn-sm" id="swap-agents-btn" disabled>
-            <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
-            </svg>
-            Swap Agents
-          </button>
         </div>
         
         <!-- Available Agents List -->
         <div class="available-agents-section">
-          <h3 class="section-title">Available Agents</h3>
+          <div class="section-header">
+            <h3 class="section-title">Available Agents</h3>
+            <button class="btn-refresh-agents" id="refresh-agents-btn" title="Refresh agent list">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+              </svg>
+            </button>
+          </div>
           <div class="available-agents-list" id="available-agents-list">
             <div class="empty-state">
               <p>No agents available</p>
-              <p class="empty-hint">Open chat tabs to see them here</p>
+              <p class="empty-hint">Open chat tabs (ChatGPT, Gemini, etc.) to see them here</p>
             </div>
           </div>
         </div>
@@ -234,7 +191,7 @@
           <svg class="inline w-4 h-4 mr-1 align-middle" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
           </svg>
-          Chat tabs automatically register. Select agents from the list above to assign them to Agent A or B.
+          Chat tabs automatically register. Select agents from the list above to add them to the conversation. The order determines the chat flow.
         </p>
       </section>
 
@@ -304,6 +261,17 @@
         
         <div class="log-stats">
           <span id="log-count">0 logs</span>
+        </div>
+        
+        <div class="log-filters">
+          <label class="filter-label">Filter by level:</label>
+          <div class="filter-buttons">
+            <button class="filter-btn active" data-filter="ALL" id="filter-all">All</button>
+            <button class="filter-btn" data-filter="ERROR" id="filter-error">Error</button>
+            <button class="filter-btn" data-filter="WARN" id="filter-warn">Warning</button>
+            <button class="filter-btn" data-filter="INFO" id="filter-info">Info</button>
+            <button class="filter-btn" data-filter="DEBUG" id="filter-debug">Debug</button>
+          </div>
         </div>
         
         <div class="log-container" id="log-container">
