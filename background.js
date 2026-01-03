@@ -2173,12 +2173,12 @@ function getRootUrlForPlatform(url) {
       return 'https://chat.deepseek.com/';
     }
     
-    // DuckDuckGo: https://duckduckgo.com/?ia=chat or https://duck.ai/
+    // DuckDuckGo: https://duckduckgo.com/?q=DuckDuckGo+AI+Chat&ia=chat&duckai=1 or https://duck.ai/
     if (hostname.includes('duck.ai')) {
       return 'https://duck.ai/';
     }
     if (hostname.includes('duckduckgo.com')) {
-      return 'https://duckduckgo.com/?ia=chat';
+      return 'https://duckduckgo.com/?q=DuckDuckGo+AI+Chat&ia=chat&duckai=1';
     }
     
     return null;

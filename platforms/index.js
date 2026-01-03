@@ -28,7 +28,9 @@ const PlatformRegistry = {
       if (adapter.matches(hostname)) {
         // Special check for DuckDuckGo - only match on AI chat pages
         if (adapter.name === 'duckduckgo') {
-          if (!url.includes('ia=chat') && !hostname.includes('duck.ai')) {
+          const isDuckAiHost = hostname.includes('duck.ai');
+          const hasChatParam = url.includes('ia=chat') || url.includes('duckai');
+          if (!hasChatParam && !isDuckAiHost) {
             continue; // Skip DuckDuckGo adapter for non-chat pages
           }
         }
