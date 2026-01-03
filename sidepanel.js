@@ -307,6 +307,12 @@ function setupEventListeners() {
     spWarn('[Side Panel] Expand/collapse buttons not found!', { expandBtn: !!expandBtn, collapseBtn: !!collapseBtn });
   }
 
+  // Snapshot conversation
+  const snapshotBtn = document.getElementById('snapshot-conversation-btn');
+  if (snapshotBtn) {
+    snapshotBtn.addEventListener('click', snapshotConversation);
+  }
+
   // Download conversation
   const downloadBtn = document.getElementById('download-conversation-btn');
   if (downloadBtn) {
@@ -998,6 +1004,288 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+async function snapshotConversation() {
+  try {
+    // Check if html2canvas is available
+    if (typeof html2canvas === 'undefined') {
+      showToast('❌ Snapshot library not loaded. Please refresh the page.', 'error');
+      return;
+    }
+
+    const conversationContainer = elements.conversationHistory;
+    if (!conversationContainer) {
+      showToast('❌ Conversation container not found', 'error');
+      return;
+    }
+
+    // Check if there are messages
+    const messageItems = conversationContainer.querySelectorAll('.message-item');
+    const messageCount = messageItems.length;
+    
+    if (messageCount === 0) {
+      showToast('⚠️ No conversation to snapshot', 'error');
+      return;
+    }
+
+    spLog(`[Snapshot] Starting capture of ${messageCount} messages`);
+    showToast(`📸 Capturing ${messageCount} messages...`, 'success');
+
+    // Store original scroll position and styles
+    const originalScrollTop = conversationContainer.scrollTop;
+    const originalOverflow = conversationContainer.style.overflow;
+    const originalHeight = conversationContainer.style.height;
+    const originalMaxHeight = conversationContainer.style.maxHeight;
+    
+    // Temporarily remove overflow and height restrictions to capture full content
+    conversationContainer.style.overflow = 'visible';
+    conversationContainer.style.height = 'auto';
+    conversationContainer.style.maxHeight = 'none';
+    
+    // Scroll to top to ensure we start from the beginning
+    conversationContainer.scrollTop = 0;
+    
+    // Wait for scroll and layout to settle
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    // Force multiple reflows to ensure all content is measured
+    conversationContainer.offsetHeight;
+    void conversationContainer.offsetWidth; // Force layout
+    
+    // Calculate actual content height by summing all message heights
+    let calculatedHeight = 0;
+    messageItems.forEach((msg, index) => {
+      const msgHeight = msg.offsetHeight;
+      const msgMargin = parseInt(getComputedStyle(msg).marginBottom) || 0;
+      calculatedHeight += msgHeight + msgMargin;
+      spLog(`[Snapshot] Message ${index + 1} height: ${msgHeight}px`);
+    });
+    
+    // Get the full dimensions - use the larger of scrollHeight or calculated height
+    const scrollHeight = conversationContainer.scrollHeight;
+    const fullHeight = Math.max(scrollHeight, calculatedHeight + 20); // Add padding
+    const containerWidth = conversationContainer.clientWidth;
+    
+    spLog(`[Snapshot] ScrollHeight: ${scrollHeight}px, Calculated: ${calculatedHeight}px, Using: ${fullHeight}px`);
+    
+    spLog(`[Snapshot] Container dimensions: ${containerWidth}x${fullHeight}px`);
+    spLog(`[Snapshot] Message count: ${messageCount}`);
+    
+    // Get background from the container's parent or body
+    const containerStyle = getComputedStyle(conversationContainer);
+    const tabPage = conversationContainer.closest('.tab-page');
+    const tabPageStyle = tabPage ? getComputedStyle(tabPage) : null;
+    const bodyStyle = getComputedStyle(document.body);
+    
+    // Try to get background color, prefer parent containers
+    let bgColor = containerStyle.backgroundColor;
+    if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'transparent') {
+      bgColor = tabPageStyle ? tabPageStyle.backgroundColor : bodyStyle.backgroundColor;
+    }
+    if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'transparent') {
+      bgColor = document.body.classList.contains('dark-theme') ? '#000000' : '#F2F2F7';
+    }
+    
+    spLog(`[Snapshot] Background color: ${bgColor}`);
+    
+    // Configure html2canvas options for full conversation capture
+    const options = {
+      backgroundColor: bgColor,
+      scale: 2, // Higher quality (2x)
+      useCORS: true,
+      logging: false,
+      width: containerWidth,
+      height: fullHeight,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: containerWidth,
+      windowHeight: fullHeight,
+      allowTaint: false,
+      removeContainer: false,
+      onclone: (clonedDoc) => {
+        // Ensure the cloned document has the same background and full height
+        const clonedContainer = clonedDoc.querySelector('#conversation-history');
+        if (clonedContainer) {
+          clonedContainer.style.overflow = 'visible';
+          clonedContainer.style.height = 'auto';
+          clonedContainer.style.maxHeight = 'none';
+          clonedContainer.style.minHeight = `${fullHeight}px`;
+          clonedContainer.scrollTop = 0;
+          
+          // Ensure all message items are visible
+          const clonedMessages = clonedContainer.querySelectorAll('.message-item');
+          clonedMessages.forEach(msg => {
+            msg.style.display = 'block';
+            msg.style.visibility = 'visible';
+          });
+        }
+        // Ensure body and parent containers have background
+        const clonedBody = clonedDoc.body;
+        if (clonedBody) {
+          clonedBody.style.backgroundColor = bgColor;
+        }
+        const clonedTabPage = clonedDoc.querySelector('.tab-page');
+        if (clonedTabPage) {
+          clonedTabPage.style.backgroundColor = bgColor;
+        }
+      }
+    };
+
+    // Create a wrapper to center the content in the snapshot
+    const wrapper = document.createElement('div');
+    wrapper.id = 'snapshot-wrapper';
+    wrapper.style.position = 'absolute';
+    wrapper.style.left = '-9999px';
+    wrapper.style.width = '800px'; // Fixed width for centered content
+    wrapper.style.margin = '0 auto';
+    wrapper.style.backgroundColor = bgColor;
+    wrapper.style.padding = '20px';
+    wrapper.style.boxSizing = 'border-box';
+    wrapper.style.display = 'flex';
+    wrapper.style.justifyContent = 'center';
+    
+    // Clone the conversation container
+    const clonedContainer = conversationContainer.cloneNode(true);
+    clonedContainer.style.width = '100%';
+    clonedContainer.style.maxWidth = '760px'; // 800 - 40px padding
+    clonedContainer.style.margin = '0';
+    clonedContainer.style.overflow = 'visible';
+    clonedContainer.style.height = 'auto';
+    clonedContainer.style.maxHeight = 'none';
+    clonedContainer.scrollTop = 0;
+    
+    wrapper.appendChild(clonedContainer);
+    document.body.appendChild(wrapper);
+    
+    // Wait for layout
+    await new Promise(resolve => setTimeout(resolve, 100));
+    wrapper.offsetHeight; // Force reflow
+    
+    // Update options for the wrapper
+    const wrapperHeight = clonedContainer.scrollHeight + 40; // Add padding
+    const wrapperOptions = {
+      backgroundColor: bgColor,
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      width: 800,
+      height: wrapperHeight,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: 800,
+      windowHeight: wrapperHeight,
+      allowTaint: false,
+      removeContainer: false,
+      onclone: (clonedDoc) => {
+        // Ensure the cloned wrapper has proper styling
+        const clonedWrapper = clonedDoc.querySelector('#snapshot-wrapper');
+        if (clonedWrapper) {
+          clonedWrapper.style.width = '800px';
+          clonedWrapper.style.margin = '0 auto';
+          clonedWrapper.style.backgroundColor = bgColor;
+          clonedWrapper.style.padding = '20px';
+          clonedWrapper.style.display = 'flex';
+          clonedWrapper.style.justifyContent = 'center';
+        }
+        // Find the cloned conversation container (it's a direct child of wrapper)
+        const clonedInnerContainer = clonedWrapper ? (clonedWrapper.querySelector('#conversation-history') || clonedWrapper.querySelector('.conversation-container') || clonedWrapper.firstElementChild) : null;
+        if (clonedInnerContainer) {
+          clonedInnerContainer.style.width = '100%';
+          clonedInnerContainer.style.maxWidth = '760px';
+          clonedInnerContainer.style.margin = '0';
+          clonedInnerContainer.style.overflow = 'visible';
+          clonedInnerContainer.style.height = 'auto';
+          clonedInnerContainer.style.maxHeight = 'none';
+          clonedInnerContainer.scrollTop = 0;
+          
+          // Ensure all message items are visible
+          const clonedMessages = clonedInnerContainer.querySelectorAll('.message-item');
+          clonedMessages.forEach(msg => {
+            msg.style.display = 'block';
+            msg.style.visibility = 'visible';
+          });
+        }
+        // Ensure body has background
+        const clonedBody = clonedDoc.body;
+        if (clonedBody) {
+          clonedBody.style.backgroundColor = bgColor;
+          clonedBody.style.display = 'flex';
+          clonedBody.style.justifyContent = 'center';
+          clonedBody.style.alignItems = 'flex-start';
+        }
+      }
+    };
+    
+    // Capture the wrapper
+    spLog('[Snapshot] Starting html2canvas capture with centered wrapper...');
+    const canvas = await html2canvas(wrapper, wrapperOptions);
+    
+    // Clean up wrapper
+    document.body.removeChild(wrapper);
+    
+    spLog(`[Snapshot] Canvas created: ${canvas.width}x${canvas.height}px (centered)`);
+    
+    // Verify we captured content
+    const canvasHeight = canvas.height;
+    const expectedHeight = fullHeight * 2; // Account for scale factor
+    const heightDiff = Math.abs(canvasHeight - expectedHeight);
+    
+    spLog(`[Snapshot] Canvas height: ${canvasHeight}px, Expected: ${expectedHeight}px, Diff: ${heightDiff}px`);
+    
+    if (canvasHeight < 100) {
+      spWarn('[Snapshot] Canvas height seems too small, may not have captured all messages');
+    } else if (heightDiff > 100) {
+      spWarn(`[Snapshot] Height difference is significant (${heightDiff}px), some content may be missing`);
+    } else {
+      spLog('[Snapshot] Canvas height matches expected dimensions');
+    }
+    
+    // Verify message count in canvas (rough check by checking if canvas is tall enough)
+    const minExpectedHeight = messageCount * 50; // Rough estimate: 50px per message minimum
+    if (canvasHeight < minExpectedHeight * 2) {
+      spWarn(`[Snapshot] Canvas may be missing messages. Expected at least ${minExpectedHeight * 2}px for ${messageCount} messages`);
+    }
+    
+    // Restore original scroll position and styles
+    conversationContainer.scrollTop = originalScrollTop;
+    conversationContainer.style.overflow = originalOverflow;
+    conversationContainer.style.height = originalHeight;
+    conversationContainer.style.maxHeight = originalMaxHeight;
+    
+    // Convert canvas to blob
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        showToast('❌ Failed to create image', 'error');
+        return;
+      }
+
+      const fileSize = (blob.size / 1024).toFixed(2);
+      spLog(`[Snapshot] Image created: ${fileSize}KB`);
+
+      // Create download link
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+      a.href = url;
+      a.download = `ai-chat-bridge-snapshot-${timestamp}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      showToast(`✅ Snapshot saved (${messageCount} messages, ${fileSize}KB)`, 'success');
+    }, 'image/png', 0.95); // 95% quality
+
+  } catch (error) {
+    spError('[Side Panel] Failed to snapshot conversation:', error);
+    showToast('❌ Failed to create snapshot: ' + error.message, 'error');
+    
+    // Restore original state on error
+    if (elements.conversationHistory) {
+      elements.conversationHistory.style.overflow = '';
+    }
+  }
 }
 
 async function downloadConversation() {

@@ -1220,7 +1220,8 @@ body {
   display: block !important;
 }
 
-/* Ensure download button and its icon are visible */
+/* Ensure snapshot and download buttons and their icons are visible */
+#snapshot-conversation-btn,
 #download-conversation-btn {
   align-items: center !important;
   justify-content: center !important;
@@ -1229,6 +1230,7 @@ body {
   padding: 6px !important;
 }
 
+#snapshot-conversation-btn svg,
 #download-conversation-btn svg {
   width: 16px !important;
   height: 16px !important;
@@ -1313,6 +1315,9 @@ body {
   padding-right: 4px;
   margin-bottom: 8px;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 #chat-tab-page .conversation-container {
@@ -1364,6 +1369,9 @@ body {
   padding: 12px 14px;
   margin-bottom: 10px;
   border-radius: var(--radius-md);
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .message-item.new {
@@ -1398,6 +1406,8 @@ body {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 6px;
+  width: 100%;
+  gap: 8px;
 }
 
 .message-role {
@@ -1434,6 +1444,8 @@ body {
   font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-weight: 400;
   letter-spacing: 0.01em;
+  text-align: left;
+  text-align-last: left;
 }
 
 /* Chat Input */
