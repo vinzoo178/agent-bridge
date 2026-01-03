@@ -25,11 +25,11 @@ class QwenAdapter extends BasePlatformAdapter {
         'button:has-text("Send")',
       ],
       responses: [
+        '.response-message-content',
         '.qwen-chat-message-assistant',
         '[id^="qwen-chat-message-assistant-"]',
         '.chat-response-message',
         '[id^="chat-response-message-"]',
-        '.response-message-content',
         '[data-role="assistant"]',
         '[data-author="assistant"]',
         '.assistant-message',
@@ -67,42 +67,85 @@ class QwenAdapter extends BasePlatformAdapter {
   }
   
   getResponses() {
-    // Qwen uses specific classes for assistant messages
-    // Primary: .qwen-chat-message-assistant or .chat-response-message
+    console.log('[QwenAdapter] getResponses called, URL:', window.location.href);
+    
+    // Qwen uses .response-message-content for the actual message content
+    // This is the primary selector for response messages
+    const responseContents = document.querySelectorAll('.response-message-content');
+    console.log('[QwenAdapter] getResponses: querySelectorAll(.response-message-content) returned', responseContents.length, 'elements');
+    if (responseContents.length > 0) {
+      console.log('[QwenAdapter] getResponses: Found', responseContents.length, 'response-message-content elements');
+      Array.from(responseContents).forEach((el, idx) => {
+        const text = (el.textContent || el.innerText || '').trim();
+        console.log('[QwenAdapter] getResponses: Element', idx, 'text length:', text.length, 'preview:', text.substring(0, 50));
+      });
+      return Array.from(responseContents);
+    }
+    
+    // Fallback: try container elements
+    console.log('[QwenAdapter] getResponses: No .response-message-content found, trying container elements');
     const assistantMessages = document.querySelectorAll('.qwen-chat-message-assistant, .chat-response-message');
+    console.log('[QwenAdapter] getResponses: querySelectorAll(.qwen-chat-message-assistant, .chat-response-message) returned', assistantMessages.length, 'elements');
     if (assistantMessages.length > 0) {
+      console.log('[QwenAdapter] getResponses: Found', assistantMessages.length, 'container elements');
       return Array.from(assistantMessages);
     }
     
-    // Fallback to standard selectors
-    return this.findAll(this.selectors.responses);
+    // Final fallback to standard selectors
+    console.log('[QwenAdapter] getResponses: Trying fallback selectors');
+    const fallbackResponses = this.findAll(this.selectors.responses);
+    console.log('[QwenAdapter] getResponses: Found', fallbackResponses.length, 'responses with fallback selectors');
+    return fallbackResponses;
   }
   
   getLatestResponse() {
     const responses = this.getResponses();
-    if (responses.length === 0) return null;
+    console.log('[QwenAdapter] getLatestResponse: Found', responses.length, 'responses');
+    
+    if (responses.length === 0) {
+      console.log('[QwenAdapter] getLatestResponse: No responses found');
+      return null;
+    }
     
     const last = responses[responses.length - 1];
-    // For Qwen, the text is usually in .response-message-content or directly in the container
-    const contentEl = last.querySelector('.response-message-content') || last;
-    return (contentEl.innerText || contentEl.textContent || '').trim();
+    // If it's already a .response-message-content element, use it directly
+    // Otherwise, try to find .response-message-content inside
+    const contentEl = last.classList.contains('response-message-content') 
+      ? last 
+      : (last.querySelector('.response-message-content') || last);
+    
+    const text = (contentEl.innerText || contentEl.textContent || '').trim();
+    console.log('[QwenAdapter] getLatestResponse: Text length:', text.length, 'preview:', text.substring(0, 50));
+    
+    return text;
   }
   
   isGenerating() {
     // Check stop button
     const stopBtn = this.findFirst(this.selectors.stopButton);
     if (stopBtn && stopBtn.offsetParent !== null && !stopBtn.disabled) {
+      console.log('[QwenAdapter] isGenerating: TRUE (stop button found)');
       return true;
     }
     
-    // Check loading indicators
-    for (const selector of this.selectors.loading) {
+    // Check loading indicators - be more specific to avoid false positives
+    // Only check for actual loading/streaming indicators, not generic classes
+    const specificLoadingSelectors = [
+      'button[aria-label*="Stop"]',
+      'button[aria-label*="Stop generating"]',
+      '.streaming',
+      '[class*="streaming"]'
+    ];
+    
+    for (const selector of specificLoadingSelectors) {
       const el = document.querySelector(selector);
       if (el && el.offsetParent !== null) {
+        console.log('[QwenAdapter] isGenerating: TRUE (loading indicator found:', selector, ')');
         return true;
       }
     }
     
+    console.log('[QwenAdapter] isGenerating: FALSE');
     return false;
   }
   

@@ -9,7 +9,7 @@
   // Centralized logging - sends to background
   function log(...args) {
     const message = args.join(' ');
-    // console.log('[AI Bridge Content]', ...args);
+    console.log('[AI Bridge Content]', ...args); // Enable for debugging
     sendLog('Content', 'INFO', message);
   }
 
