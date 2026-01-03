@@ -17,12 +17,14 @@ class KimiAdapter extends BasePlatformAdapter {
         'textarea',
       ],
       sendButton: [
+        '.send-button',
+        'div.send-button',
+        '.send-button-container button',
         'button[aria-label*="Send"]',
         'button[type="submit"]',
         'button:has-text("Send")',
       ],
       responses: [
-        '.message-list-container [class*="message"]:not([class*="user"]):not([class*="human"])',
         '[class*="message-item"]:not([class*="user"]):not([class*="human"])',
         '[class*="assistant-message"]',
         '[class*="message-assistant"]',
@@ -60,48 +62,74 @@ class KimiAdapter extends BasePlatformAdapter {
   }
   
   getSendButton() {
-    const btn = this.findFirst(this.selectors.sendButton);
-    console.log('[KimiAdapter] getSendButton:', btn ? {
-      tagName: btn.tagName,
-      className: btn.className,
-      disabled: btn.disabled
-    } : 'NOT FOUND (will use Enter key)');
-    return (btn && !btn.disabled) ? btn : null;
+    // Try button selectors first
+    for (const selector of this.selectors.sendButton) {
+      const btn = document.querySelector(selector);
+      if (btn) {
+        // If it's a button, check if it's enabled
+        if (btn.tagName === 'BUTTON' && btn.offsetParent !== null && !btn.disabled) {
+          console.log('[KimiAdapter] getSendButton: Found button:', selector);
+          return btn;
+        }
+        // If it's a div with send-button class, check if it's clickable
+        if (btn.tagName === 'DIV' && btn.offsetParent !== null) {
+          // Check if there's a button inside
+          const innerButton = btn.querySelector('button');
+          if (innerButton && !innerButton.disabled) {
+            console.log('[KimiAdapter] getSendButton: Found button inside div:', selector);
+            return innerButton;
+          }
+          // If no button inside, the div itself might be clickable
+          console.log('[KimiAdapter] getSendButton: Found clickable div:', selector);
+          return btn;
+        }
+      }
+    }
+    
+    console.log('[KimiAdapter] getSendButton: NOT FOUND (will use Enter key)');
+    return null;
   }
   
   getResponses() {
-    console.log('[KimiAdapter] getResponses called');
+    console.log('[KimiAdapter] getResponses called, URL:', window.location.href);
     
     // Try to find response messages - Kimi may use various patterns
-    const responses = this.findAll(this.selectors.responses);
-    console.log('[KimiAdapter] getResponses: Found', responses.length, 'responses with standard selectors');
+    // First, filter out container elements like .message-list
+    const allResponses = this.findAll(this.selectors.responses);
+    const responses = allResponses.filter(el => {
+      const className = (el.className || '').toString().toLowerCase();
+      const text = (el.textContent || el.innerText || '').trim();
+      // Exclude container elements (like .message-list) that have no direct text
+      return !className.includes('message-list') && text.length > 0;
+    });
+    
+    console.log('[KimiAdapter] getResponses: Found', responses.length, 'responses after filtering (from', allResponses.length, 'total)');
     
     if (responses.length === 0) {
       // Try alternative patterns specific to Kimi
       console.log('[KimiAdapter] getResponses: Trying alternative selectors');
       
-      // Check for common message container patterns
+      // Check for common message container patterns (but exclude .message-list)
       const altSelectors = [
         '[class*="message-item"]',
         '[class*="MessageItem"]',
         '[class*="chat-message"]',
-        '[class*="ChatMessage"]',
-        '.message-list-container [class*="message"]',
-        '[class*="message-list"] [class*="message"]'
+        '[class*="ChatMessage"]'
       ];
       
       for (const selector of altSelectors) {
         const elements = document.querySelectorAll(selector);
         if (elements.length > 0) {
           console.log('[KimiAdapter] getResponses: Found', elements.length, 'with selector:', selector);
-          // Filter to assistant messages (exclude user messages)
+          // Filter to assistant messages (exclude user messages and containers)
           const assistantMessages = Array.from(elements).filter(el => {
             const text = (el.textContent || el.innerText || '').trim();
             const className = (el.className || '').toString().toLowerCase();
-            // Exclude user messages and very short text
+            // Exclude user messages, containers, and very short text
             return text.length > 20 && 
                    !className.includes('user') &&
                    !className.includes('human') &&
+                   !className.includes('message-list') &&
                    !el.closest('[class*="user"]');
           });
           if (assistantMessages.length > 0) {
@@ -115,21 +143,70 @@ class KimiAdapter extends BasePlatformAdapter {
     return responses;
   }
   
+  getLatestResponse() {
+    const responses = this.getResponses();
+    console.log('[KimiAdapter] getLatestResponse: Found', responses.length, 'responses');
+    
+    if (responses.length === 0) {
+      console.log('[KimiAdapter] getLatestResponse: No responses found');
+      return null;
+    }
+    
+    const last = responses[responses.length - 1];
+    console.log('[KimiAdapter] getLatestResponse: Last element:', {
+      tagName: last.tagName,
+      className: (last.className || '').toString().substring(0, 100),
+      id: last.id || '',
+      innerTextLength: (last.innerText || '').trim().length,
+      textContentLength: (last.textContent || '').trim().length
+    });
+    
+    // Try to find text content - check children if direct text is empty
+    let text = (last.innerText || last.textContent || '').trim();
+    
+    if (text.length === 0) {
+      // Try to find text in child elements
+      const textElements = last.querySelectorAll('p, div, span, [class*="content"], [class*="text"], [class*="message"]');
+      for (const el of textElements) {
+        const childText = (el.innerText || el.textContent || '').trim();
+        if (childText.length > text.length) {
+          text = childText;
+        }
+      }
+      console.log('[KimiAdapter] getLatestResponse: After checking children, text length:', text.length);
+    }
+    
+    console.log('[KimiAdapter] getLatestResponse: Text length:', text.length, 'preview:', text.substring(0, 50));
+    
+    return text;
+  }
+  
   isGenerating() {
     // Check stop button
     const stopBtn = this.findFirst(this.selectors.stopButton);
     if (stopBtn && stopBtn.offsetParent !== null && !stopBtn.disabled) {
+      console.log('[KimiAdapter] isGenerating: TRUE (stop button found)');
       return true;
     }
     
-    // Check loading indicators
-    for (const selector of this.selectors.loading) {
+    // Check loading indicators - be more specific to avoid false positives
+    // Only check for actual loading/streaming indicators, not generic classes
+    const specificLoadingSelectors = [
+      'button[aria-label*="Stop"]',
+      'button[aria-label*="Stop generating"]',
+      '.streaming',
+      '[class*="streaming"]'
+    ];
+    
+    for (const selector of specificLoadingSelectors) {
       const el = document.querySelector(selector);
       if (el && el.offsetParent !== null) {
+        console.log('[KimiAdapter] isGenerating: TRUE (loading indicator found:', selector, ')');
         return true;
       }
     }
     
+    console.log('[KimiAdapter] isGenerating: FALSE');
     return false;
   }
   
@@ -233,11 +310,36 @@ class KimiAdapter extends BasePlatformAdapter {
     // First, try to find a send button again (might appear after text is entered)
     const sendBtn = this.getSendButton();
     if (sendBtn) {
-      console.log('[KimiAdapter] clickSend: Found send button, clicking it');
-      sendBtn.click();
-      await this.sleep(100);
-      console.log('[KimiAdapter] clickSend: Send button clicked');
-      return true;
+      console.log('[KimiAdapter] clickSend: Found send button, clicking it', {
+        tagName: sendBtn.tagName,
+        className: sendBtn.className
+      });
+      
+      // If it's a div, try clicking it directly
+      if (sendBtn.tagName === 'DIV') {
+        // Try mouse events for div
+        sendBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        await this.sleep(50);
+        sendBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+        await this.sleep(50);
+        sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      } else {
+        sendBtn.click();
+      }
+      
+      await this.sleep(200);
+      
+      // Check if input was cleared (message sent)
+      const input = this.getInputField();
+      const textAfter = input ? (input.textContent || input.innerText || '').trim() : '';
+      console.log('[KimiAdapter] clickSend: After click, input text length:', textAfter.length);
+      
+      if (textAfter.length === 0) {
+        console.log('[KimiAdapter] clickSend: Message sent successfully (input cleared)');
+        return true;
+      }
+      
+      console.log('[KimiAdapter] clickSend: Input not cleared, message may not have sent');
     }
     
     const input = this.getInputField();
