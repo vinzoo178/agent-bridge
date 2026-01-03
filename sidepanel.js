@@ -692,7 +692,8 @@ async function startConversation() {
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'START_CONVERSATION',
-      initialPrompt: initialPrompt
+      initialPrompt: initialPrompt,
+      templateType: selectedTemplate || null
     });
 
     if (response.success) {

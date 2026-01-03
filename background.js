@@ -1,6 +1,15 @@
 // AI Chat Bridge - Background Service Worker
 // Manages communication between two AI chat sessions
 
+// Template word limits configuration
+const TEMPLATE_WORD_LIMITS = {
+  debate: 200,
+  story: 100,
+  qa: 100, // Default for Q&A (answers), questions are typically shorter
+  brainstorm: 100,
+  default: 200 // Fallback for unknown templates or when no template is specified
+};
+
 const state = {
   isActive: false,
   // Participants array - supports multiple agents (n agents)
@@ -14,7 +23,8 @@ const state = {
     autoReplyDelay: 2000, // Delay before auto-reply (ms)
     maxTurns: 50, // Maximum conversation turns
     contextMessages: 4, // Number of recent messages to include as context
-    initialPrompt: ''
+    initialPrompt: '',
+    templateType: null // Template type: 'debate', 'story', 'qa', 'brainstorm', or null
   }
 };
 
@@ -176,6 +186,47 @@ async function loadLogsFromStorage(addStartupLog = false) {
   }
 }
 
+// Save ERROR log immediately to local storage (for critical errors)
+// This ensures ERROR logs are persisted even if service worker terminates before debounced save
+async function saveErrorLogImmediately(errorEntry) {
+  try {
+    // Load existing logs from local storage
+    const result = await chrome.storage.local.get(['debugLogs']);
+    let existingLogs = [];
+    if (result.debugLogs && Array.isArray(result.debugLogs)) {
+      existingLogs = result.debugLogs;
+    }
+
+    // Add the new ERROR log
+    existingLogs.push(errorEntry);
+
+    // Keep only ERROR/WARN logs + last 50 logs (as per logging strategy)
+    const importantLogs = existingLogs.filter(log => log.level === 'ERROR' || log.level === 'WARN');
+    const recentLogs = existingLogs.slice(-MAX_RECENT_LOGS);
+
+    // Combine and deduplicate by timestamp
+    const allLogsForLocal = [...importantLogs, ...recentLogs];
+    const uniqueLogs = Array.from(
+      new Map(allLogsForLocal.map(log => [log.timestamp, log])).values()
+    );
+
+    // Sort by timestamp and keep last MAX_LOCAL_LOGS
+    const logsForLocal = uniqueLogs
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      .slice(-MAX_LOCAL_LOGS);
+
+    // Save to local storage
+    await chrome.storage.local.set({ debugLogs: logsForLocal });
+    // Don't log this save operation to avoid infinite loop (this is called from addLog)
+  } catch (e) {
+    // Silently fail - the debounced save will retry anyway
+    // Only log if it's not a quota error (to avoid spam)
+    if (!e.message || !e.message.includes('QUOTA_BYTES')) {
+      console.error('[Background] Failed to save ERROR log immediately:', e);
+    }
+  }
+}
+
 // Save logs to storage (debounced)
 // Strategy: Session storage first (primary backup), then local storage (important only)
 async function saveLogsToStorage() {
@@ -285,6 +336,7 @@ restoreStateFromStorage().then(() => {
 
 // Add log entry - Memory-first approach
 // Logs are immediately available in memory, then saved to storage (debounced)
+// ERROR logs are saved immediately to local storage to ensure persistence
 function addLog(source, level, message) {
   const entry = {
     timestamp: new Date().toISOString(),
@@ -301,7 +353,16 @@ function addLog(source, level, message) {
     debugLogs.splice(0, debugLogs.length - MAX_LOGS);
   }
 
-  // Save to storage (debounced - session storage + local storage for important logs)
+  // Save to storage
+  // For ERROR logs: save immediately to local storage to ensure persistence
+  // For other logs: use debounced save for performance
+  if (level === 'ERROR') {
+    // Save ERROR logs immediately to ensure they're persisted
+    // This is important because service worker might terminate before debounced save
+    saveErrorLogImmediately(entry);
+  }
+  
+  // Always trigger debounced save (for session storage and batch local storage updates)
   saveLogsToStorage();
 
   // Also console log for immediate visibility
@@ -337,25 +398,36 @@ async function initBackendClient() {
     // Create or get extension page for backend client
     const url = chrome.runtime.getURL('backend-page.html');
 
-    // Check if page already exists
-    const tabs = await chrome.tabs.query({ url: url });
-    if (tabs.length > 0) {
-      bgLog('Backend client page already exists, tab ID:', tabs[0].id);
-      // Ensure it's not closed
+    // Check if page already exists (use pattern matching for more reliable detection)
+    const allTabs = await chrome.tabs.query({});
+    const existingTab = allTabs.find(tab => tab.url && tab.url.includes('backend-page.html'));
+    
+    if (existingTab) {
+      bgLog('Backend client page already exists, tab ID:', existingTab.id, 'URL:', existingTab.url);
+      // Ensure it's not closed and verify it's accessible
       try {
-        await chrome.tabs.reload(tabs[0].id);
-        bgLog('Reloaded existing backend client page');
+        const tab = await chrome.tabs.get(existingTab.id);
+        if (tab.status === 'complete') {
+          bgLog('Existing backend client page is ready');
+          return;
+        } else {
+          // Tab exists but not loaded yet, wait for it
+          bgLog('Existing backend client page is loading, waiting...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const updatedTab = await chrome.tabs.get(existingTab.id);
+          if (updatedTab.status === 'complete') {
+            bgLog('Existing backend client page is now ready');
+            return;
+          }
+        }
       } catch (e) {
-        bgLog('Tab was closed, creating new one');
-        await chrome.tabs.create({
-          url: url,
-          active: false
-        });
+        bgLog('Existing tab was closed or inaccessible, creating new one:', e.message);
+        // Fall through to create new tab
       }
-      return;
     }
 
     // Create new page
+    bgLog('Creating new backend client page...');
     const tab = await chrome.tabs.create({
       url: url,
       active: false
@@ -363,22 +435,68 @@ async function initBackendClient() {
 
     bgLog('Backend client page created, tab ID:', tab.id);
 
-    // Wait a bit for page to load, then verify
-    setTimeout(async () => {
+    // Wait for page to load, then verify by tab ID (more reliable than URL query)
+    // Use multiple attempts with increasing delays
+    let attempts = 0;
+    const maxAttempts = 5;
+    const checkInterval = 500; // Start with 500ms, then increase
+
+    const verifyTab = async () => {
       try {
-        const updatedTabs = await chrome.tabs.query({ url: url });
-        if (updatedTabs.length > 0) {
-          bgLog('Backend client page verified');
+        // Verify by tab ID (more reliable)
+        const verifyTab = await chrome.tabs.get(tab.id);
+        
+        if (verifyTab && verifyTab.url && verifyTab.url.includes('backend-page.html')) {
+          if (verifyTab.status === 'complete') {
+            bgLog('Backend client page verified successfully, tab ID:', verifyTab.id, 'status:', verifyTab.status);
+            return true;
+          } else {
+            bgLog('Backend client page is loading, status:', verifyTab.status, 'attempt:', attempts + 1);
+          }
         } else {
-          bgError('Backend client page was not created properly');
+          bgWarn('Backend client page tab found but URL mismatch:', verifyTab?.url);
         }
       } catch (e) {
-        bgError('Error verifying backend client page:', e);
+        if (e.message && e.message.includes('No tab with id')) {
+          bgError('Backend client page tab was closed before verification, tab ID:', tab.id);
+          return false;
+        } else {
+          bgWarn('Error checking tab (attempt ' + (attempts + 1) + '):', e.message);
+        }
       }
-    }, 2000);
+      
+      attempts++;
+      if (attempts < maxAttempts) {
+        // Retry with exponential backoff
+        setTimeout(verifyTab, checkInterval * attempts);
+      } else {
+        // Final check - try URL query as fallback
+        try {
+          const urlTabs = await chrome.tabs.query({ url: url });
+          if (urlTabs.length > 0) {
+            bgLog('Backend client page found via URL query (fallback), tab ID:', urlTabs[0].id);
+          } else {
+            // Also try pattern matching
+            const allTabsCheck = await chrome.tabs.query({});
+            const foundTab = allTabsCheck.find(t => t.url && t.url.includes('backend-page.html'));
+            if (foundTab) {
+              bgLog('Backend client page found via pattern match (fallback), tab ID:', foundTab.id);
+            } else {
+              bgError('Backend client page was not created properly - tab not found after', maxAttempts, 'attempts. Created tab ID was:', tab.id);
+            }
+          }
+        } catch (e) {
+          bgError('Backend client page verification failed completely:', e.message, 'Created tab ID was:', tab.id);
+        }
+      }
+      return false;
+    };
+
+    // Start verification after initial delay
+    setTimeout(verifyTab, 1000);
 
   } catch (error) {
-    bgError('Failed to initialize backend client:', error);
+    bgError('Failed to initialize backend client:', error.message || error);
     // Retry after delay
     setTimeout(initBackendClient, 5000);
   }
@@ -528,7 +646,7 @@ async function handleMessage(message, sender) {
       return handleAIResponse(message.response, message.sessionNum, message.requestId);
 
     case 'START_CONVERSATION':
-      return startConversation(message.initialPrompt);
+      return startConversation(message.initialPrompt, message.templateType);
 
     case 'STOP_CONVERSATION':
       return stopConversation();
@@ -1177,10 +1295,20 @@ async function handleAIResponse(response, sessionNum, requestId) {
   return { success: true };
 }
 
+// Get word limit for current template type
+function getWordLimitForTemplate() {
+  const templateType = state.config.templateType;
+  if (templateType && TEMPLATE_WORD_LIMITS[templateType]) {
+    return TEMPLATE_WORD_LIMITS[templateType];
+  }
+  return TEMPLATE_WORD_LIMITS.default;
+}
+
 // Build message with context from recent messages
 function buildMessageWithContext(latestResponse, fromParticipantIndex) {
   const history = state.conversationHistory;
   const contextCount = state.config.contextMessages || 4;
+  const wordLimit = getWordLimitForTemplate();
 
   // If this is early in conversation (< 3 messages), add length limit reminder
   if (history.length <= 2) {
@@ -1190,7 +1318,7 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
       message = '📌 **CHỦ ĐỀ CHÍNH:**\n' + state.config.initialPrompt + '\n\n─'.repeat(40) + '\n\n' + message;
     }
     // Add length limit instruction even for early messages
-    return message + '\n\n⚠️ **LƯU Ý:** Giữ câu trả lời NGẮN GỌN (2-4 câu, dưới 200 từ). KHÔNG viết dài dòng.';
+    return message + `\n\n⚠️ **LƯU Ý:** Giữ câu trả lời NGẮN GỌN (2-4 câu, dưới ${wordLimit} từ). KHÔNG viết dài dòng.`;
   }
 
   // Get recent messages for context (excluding the latest one we just added)
@@ -1214,9 +1342,10 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
   contextStr += '─'.repeat(40) + '\n';
 
   recentMessages.forEach((msg, index) => {
-    // Truncate each context message to keep it brief
-    const shortContent = msg.content.length > 200
-      ? msg.content.substring(0, 200) + '...'
+    // Truncate each context message to keep it brief (use word limit for truncation)
+    const truncateLength = Math.min(wordLimit * 5, 200); // Rough estimate: 5 chars per word, max 200 chars
+    const shortContent = msg.content.length > truncateLength
+      ? msg.content.substring(0, truncateLength) + '...'
       : msg.content;
     contextStr += `**${msg.role}**: ${shortContent}\n\n`;
   });
@@ -1226,18 +1355,18 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
   contextStr += latestResponse;
   contextStr += '\n\n─'.repeat(40) + '\n';
   contextStr += '👉 **QUAN TRỌNG - QUY TẮC BẮT BUỘC:**\n';
-  contextStr += '⚠️ Trả lời NGẮN GỌN - CHỈ 2-4 CÂU (tối đa 200 TỪ)\n';
+  contextStr += `⚠️ Trả lời NGẮN GỌN - CHỈ 2-4 CÂU (tối đa ${wordLimit} TỪ)\n`;
   contextStr += '⚠️ KHÔNG viết dài dòng, KHÔNG liệt kê nhiều ý\n';
   contextStr += '⚠️ Giữ câu trả lời SÚC TÍCH và ĐIỂM QUAN TRỌNG NHẤT\n';
   contextStr += '⚠️ TẬP TRUNG vào chủ đề gốc đã nêu ở trên\n';
-  contextStr += '👉 Hãy tiếp tục cuộc thảo luận dựa trên context ở trên, TẬP TRUNG vào chủ đề gốc, với câu trả lời NGẮN GỌN (2-4 câu, dưới 200 từ).';
+  contextStr += `👉 Hãy tiếp tục cuộc thảo luận dựa trên context ở trên, TẬP TRUNG vào chủ đề gốc, với câu trả lời NGẮN GỌN (2-4 câu, dưới ${wordLimit} từ).`;
 
-  bgLog('[Background] Built message with', recentMessages.length, 'context messages');
+  bgLog('[Background] Built message with', recentMessages.length, 'context messages, word limit:', wordLimit);
 
   return contextStr;
 }
 
-async function startConversation(initialPrompt) {
+async function startConversation(initialPrompt, templateType = null) {
   // Count participants with tabId (actual agents assigned)
   const validParticipants = state.participants.filter(p => p && p.tabId);
 
@@ -1254,8 +1383,12 @@ async function startConversation(initialPrompt) {
   state.isActive = true;
   state.currentTurn = firstParticipantIndex; // Start with first valid participant (0-based index)
   state.config.initialPrompt = initialPrompt;
+  state.config.templateType = templateType; // Store template type for word limit configuration
 
-  await chrome.storage.local.set({ isActive: true });
+  await chrome.storage.local.set({ 
+    isActive: true,
+    config: state.config 
+  });
 
   broadcastStateUpdate();
 
