@@ -21,7 +21,9 @@
     "https://chat.z.ai/*",
     "https://z.ai/*",
     "https://www.kimi.com/*",
-    "https://kimi.com/*"
+    "https://kimi.com/*",
+    "https://you.com/*",
+    "https://www.you.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -50,7 +52,9 @@
         "https://chat.z.ai/*",
         "https://z.ai/*",
         "https://www.kimi.com/*",
-        "https://kimi.com/*"
+        "https://kimi.com/*",
+        "https://you.com/*",
+        "https://www.you.com/*"
       ],
       "js": [
         "logger.js",
@@ -61,6 +65,7 @@
         "platforms/duckduckgo-adapter.js",
         "platforms/z-ai-adapter.js",
         "platforms/kimi-adapter.js",
+        "platforms/you-com-adapter.js",
         "platforms/index.js",
         "agent-registration/state.js",
         "agent-registration/ui.js",

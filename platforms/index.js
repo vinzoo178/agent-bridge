@@ -94,6 +94,11 @@ if (typeof KimiAdapter !== 'undefined') {
   PlatformRegistry.register(KimiAdapter);
 }
 
+// You.com
+if (typeof YouComAdapter !== 'undefined') {
+  PlatformRegistry.register(YouComAdapter);
+}
+
 // ============================================
 // HOW TO ADD NEW PLATFORMS:
 // 1. Create new adapter file in platforms/ folder

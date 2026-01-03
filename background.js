@@ -2122,7 +2122,8 @@ const SUPPORTED_PLATFORMS = [
   'duckduckgo.com',
   'chat.z.ai',
   'z.ai',
-  'kimi.com'
+  'kimi.com',
+  'you.com'
 ];
 
 // Check if URL is a supported chat platform
@@ -2147,6 +2148,7 @@ function detectPlatformFromUrl(url) {
     if (hostname.includes('duckduckgo')) return 'duckduckgo';
     if (hostname.includes('z.ai') || hostname.includes('chat.z.ai')) return 'zai';
     if (hostname.includes('kimi.com')) return 'kimi';
+    if (hostname.includes('you.com')) return 'youcom';
     return null;
   } catch {
     return null;
@@ -2194,6 +2196,11 @@ function getRootUrlForPlatform(url) {
     // Kimi: https://www.kimi.com/
     if (hostname.includes('kimi.com')) {
       return 'https://www.kimi.com/';
+    }
+    
+    // You.com: https://you.com/?chatMode=default
+    if (hostname.includes('you.com')) {
+      return 'https://you.com/?chatMode=default';
     }
     
     return null;
