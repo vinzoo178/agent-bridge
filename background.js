@@ -704,6 +704,10 @@ async function handleMessage(message, sender) {
       }
       return { success: false, error: 'Invalid session number' };
 
+    case 'CONTINUE_CONVERSATION':
+      // Continue conversation by sending message to a specific participant
+      return continueConversation(message.participantIndex, message.message);
+
     case 'GET_CURRENT_TAB_ID':
       // Ensure we always return a response, even if tab ID is not available
       const tabId = sender?.tab?.id || null;
@@ -1517,6 +1521,45 @@ async function sendMessageToParticipant(participantIndex, text, requestId = null
 
     return { success: false, error: error.message };
   }
+}
+
+// Continue conversation by sending a message to a specific participant
+async function continueConversation(participantIndex, message) {
+  bgLog('[Background] Continue conversation requested, participantIndex:', participantIndex);
+  
+  if (participantIndex < 0 || participantIndex >= state.participants.length) {
+    bgError('[Background] Invalid participant index:', participantIndex);
+    return { success: false, error: 'Invalid participant index' };
+  }
+
+  const participant = state.participants[participantIndex];
+  if (!participant || !participant.tabId) {
+    bgError('[Background] Participant not found or not registered:', participantIndex);
+    return { success: false, error: 'Participant not found or not registered' };
+  }
+
+  // If conversation is not active, reactivate it
+  if (!state.isActive) {
+    bgLog('[Background] Conversation not active, reactivating...');
+    state.isActive = true;
+    state.currentTurn = participantIndex;
+    await chrome.storage.local.set({ isActive: true });
+    broadcastStateUpdate();
+  } else {
+    // Update current turn to the participant we're sending to
+    state.currentTurn = participantIndex;
+  }
+
+  // Send the continuation message
+  const result = await sendMessageToParticipant(participantIndex, message);
+  
+  if (result.success) {
+    bgLog('[Background] Continuation message sent successfully');
+  } else {
+    bgError('[Background] Failed to send continuation message:', result.error);
+  }
+
+  return result;
 }
 
 function getState() {

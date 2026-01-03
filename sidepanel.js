@@ -34,10 +34,10 @@ const elements = {
   initialPrompt: document.getElementById('initial-prompt'),
   startBtn: document.getElementById('start-btn'),
   stopBtn: document.getElementById('stop-btn'),
+  continueBtn: document.getElementById('continue-btn'),
   clearConversationBtn: document.getElementById('clear-conversation-btn'),
   conversationHistory: document.getElementById('conversation-history'),
   messageCount: document.getElementById('message-count'),
-  clearHistory: document.getElementById('clear-history'),
   autoScroll: document.getElementById('auto-scroll'),
   turnIndicator: document.getElementById('turn-indicator'),
   backendStatus: document.getElementById('backend-status'),
@@ -135,6 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function initializeUI() {
   elements.startBtn.disabled = true;
   elements.stopBtn.disabled = true;
+  elements.continueBtn.disabled = true;
 
   // Enable send button if there's text in the input
   updateSendButtonState();
@@ -268,17 +269,49 @@ function setupEventListeners() {
   // Save config
   elements.saveConfig.addEventListener('click', saveConfiguration);
 
-  // Start/Stop buttons
+  // Start/Stop/Continue buttons
   elements.startBtn.addEventListener('click', startConversation);
   elements.stopBtn.addEventListener('click', stopConversation);
+  elements.continueBtn.addEventListener('click', continueConversation);
 
   // Clear conversation (near stop button)
   if (elements.clearConversationBtn) {
     elements.clearConversationBtn.addEventListener('click', clearHistory);
   }
 
-  // Clear history
-  elements.clearHistory.addEventListener('click', clearHistory);
+  // Expand/collapse conversation view
+  const expandBtn = document.getElementById('expand-conversation-btn');
+  const collapseBtn = document.getElementById('collapse-conversation-btn');
+  
+  if (expandBtn && collapseBtn) {
+    expandBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      spLog('[Side Panel] Expand button clicked, enabling focus mode');
+      document.body.classList.add('conversation-focus-mode');
+      expandBtn.style.display = 'none';
+      collapseBtn.style.display = 'flex';
+      spLog('[Side Panel] Focus mode enabled, body classes:', document.body.className);
+    });
+    
+    collapseBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      spLog('[Side Panel] Collapse button clicked, disabling focus mode');
+      document.body.classList.remove('conversation-focus-mode');
+      collapseBtn.style.display = 'none';
+      expandBtn.style.display = 'flex';
+      spLog('[Side Panel] Focus mode disabled, body classes:', document.body.className);
+    });
+  } else {
+    spWarn('[Side Panel] Expand/collapse buttons not found!', { expandBtn: !!expandBtn, collapseBtn: !!collapseBtn });
+  }
+
+  // Download conversation
+  const downloadBtn = document.getElementById('download-conversation-btn');
+  if (downloadBtn) {
+    downloadBtn.addEventListener('click', downloadConversation);
+  }
 
   // Agent selectors
   const agentASelector = document.getElementById('agent-a-selector');
@@ -505,6 +538,11 @@ function updateUI(state) {
 
   updateSendButtonState(canStart);
   elements.stopBtn.disabled = !canStop;
+  
+  // Update continue button - enable if there's conversation history and at least one participant
+  const hasHistory = (state.messageCount || 0) > 0;
+  const hasParticipants = participants.length > 0 && participants.some(p => p.connected);
+  elements.continueBtn.disabled = !hasHistory || !hasParticipants;
 
   // Update agent selectors
   updateAgentSelectors();
@@ -736,6 +774,108 @@ async function stopConversation() {
   }
 }
 
+async function continueConversation() {
+  try {
+    // Get conversation history and state
+    const [historyResponse, stateResponse] = await Promise.all([
+      chrome.runtime.sendMessage({ type: 'GET_CONVERSATION_HISTORY' }),
+      chrome.runtime.sendMessage({ type: 'GET_STATE' })
+    ]);
+
+    const history = historyResponse.history || [];
+    const state = stateResponse || {};
+
+    if (history.length === 0) {
+      showToast('⚠️ No conversation history to continue', 'error');
+      return;
+    }
+
+    const participants = state.participants || [];
+    if (participants.length === 0 || !participants.some(p => p.connected)) {
+      showToast('⚠️ No active participants to continue with', 'error');
+      return;
+    }
+
+    // Get the most recent message
+    const lastMessage = history[history.length - 1];
+    if (!lastMessage) {
+      showToast('⚠️ No recent message found', 'error');
+      return;
+    }
+
+    // Get initial prompt (subject) from config
+    const initialPrompt = state.config?.initialPrompt || '';
+    const templateType = state.config?.templateType || null;
+
+    // Determine which agent to send to (current turn, or first available if not active)
+    let targetParticipantIndex = state.currentTurn || 0;
+    if (!state.isActive) {
+      // If conversation is not active, find the first connected participant
+      targetParticipantIndex = participants.findIndex(p => p.connected);
+      if (targetParticipantIndex === -1) {
+        showToast('⚠️ No connected participants available', 'error');
+        return;
+      }
+    }
+
+    // Build continuation message with subject and recent message
+    let continuationMessage = '';
+    
+    if (initialPrompt && initialPrompt.trim()) {
+      continuationMessage += '📌 **CHỦ ĐỀ / CÂU HỎI GỐC:**\n';
+      continuationMessage += initialPrompt + '\n\n';
+      continuationMessage += '─'.repeat(40) + '\n\n';
+    }
+
+    continuationMessage += '📋 **TIN NHẮN GẦN ĐÂY NHẤT:**\n';
+    continuationMessage += '─'.repeat(40) + '\n';
+    continuationMessage += `**${lastMessage.role || `Participant ${lastMessage.sessionNum}`}**: ${lastMessage.content}\n\n`;
+    continuationMessage += '─'.repeat(40) + '\n';
+    continuationMessage += '👉 **Hãy tiếp tục cuộc thảo luận dựa trên tin nhắn trên.**\n';
+
+    // Add template-specific instructions if available
+    if (templateType) {
+      const wordLimit = templateType === 'debate' ? 200 : 
+                       templateType === 'story' ? 100 :
+                       templateType === 'qa' ? 100 :
+                       templateType === 'brainstorm' ? 100 : 200;
+      continuationMessage += `⚠️ Giữ câu trả lời NGẮN GỌN (2-4 câu, dưới ${wordLimit} từ).`;
+    }
+
+    elements.continueBtn.disabled = true;
+    elements.continueBtn.innerHTML = '<svg class="btn-icon w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Continuing...';
+
+    // Send continuation message
+    const response = await chrome.runtime.sendMessage({
+      type: 'CONTINUE_CONVERSATION',
+      participantIndex: targetParticipantIndex,
+      message: continuationMessage
+    });
+
+    if (response.success) {
+      showToast('▶️ Conversation continued!', 'success');
+      // If conversation was not active, reactivate it
+      if (!state.isActive) {
+        // The background script will handle reactivation
+        setTimeout(() => {
+          loadStateOnly();
+        }, 500);
+      }
+    } else {
+      showToast('❌ ' + (response.error || 'Failed to continue'), 'error');
+    }
+  } catch (error) {
+    spError('[Side Panel] Failed to continue:', error);
+    showToast('❌ Failed to continue', 'error');
+  } finally {
+    // Reset button
+    setTimeout(() => {
+      elements.continueBtn.innerHTML = '<svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Continue';
+      loadState();
+    }, 500);
+  }
+}
+
 async function clearHistory() {
   if (!confirm('Clear all conversation history?')) return;
 
@@ -799,18 +939,53 @@ function renderConversationHistory(history) {
   }
 }
 
+// Color palette for participants (distinct, accessible colors)
+const participantColors = [
+  { color: '#ff9500', bg: 'rgba(255, 149, 0, 0.12)' },  // Orange
+  { color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)' },  // Blue
+  { color: '#10b981', bg: 'rgba(16, 185, 129, 0.12)' },  // Green
+  { color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)' },  // Purple
+  { color: '#ec4899', bg: 'rgba(236, 72, 153, 0.12)' },  // Pink
+  { color: '#06b6d4', bg: 'rgba(6, 182, 212, 0.12)' },   // Cyan
+  { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)' },  // Amber
+  { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.12)' },   // Red
+  { color: '#6366f1', bg: 'rgba(99, 102, 241, 0.12)' },  // Indigo
+  { color: '#14b8a6', bg: 'rgba(20, 184, 166, 0.12)' },  // Teal
+];
+
+// Dark theme colors
+const participantColorsDark = [
+  { color: '#ff9500', bg: 'rgba(255, 149, 0, 0.15)' },
+  { color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)' },
+  { color: '#10b981', bg: 'rgba(16, 185, 129, 0.15)' },
+  { color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.15)' },
+  { color: '#ec4899', bg: 'rgba(236, 72, 153, 0.15)' },
+  { color: '#06b6d4', bg: 'rgba(6, 182, 212, 0.15)' },
+  { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.15)' },
+  { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' },
+  { color: '#6366f1', bg: 'rgba(99, 102, 241, 0.15)' },
+  { color: '#14b8a6', bg: 'rgba(20, 184, 166, 0.15)' },
+];
+
+function getParticipantColor(sessionNum) {
+  const isDark = document.body.classList.contains('dark-theme');
+  const palette = isDark ? participantColorsDark : participantColors;
+  const index = (sessionNum - 1) % palette.length;
+  return palette[index];
+}
+
 function createMessageHTML(msg, isNew) {
-  const agentClass = msg.sessionNum === 1 ? 'agent-a' : 'agent-b';
   const newClass = isNew ? 'new' : '';
   const time = new Date(msg.timestamp).toLocaleTimeString('vi-VN', {
     hour: '2-digit',
     minute: '2-digit'
   });
+  const colors = getParticipantColor(msg.sessionNum);
 
   return `
-    <div class="message-item ${agentClass} ${newClass}" data-id="${msg.id}">
+    <div class="message-item ${newClass}" data-id="${msg.id}" data-session="${msg.sessionNum}" style="background: ${colors.bg}; border-left: 3px solid ${colors.color};">
       <div class="message-meta">
-        <span class="message-role">${escapeHtml(msg.role)}</span>
+        <span class="message-role" style="color: ${colors.color};">${escapeHtml(msg.role)}</span>
         <span class="message-time">${time}</span>
         <span class="message-platform">${escapeHtml(msg.platform || 'unknown')}</span>
       </div>
@@ -823,6 +998,80 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+async function downloadConversation() {
+  try {
+    // Get conversation history and state
+    const [historyResponse, stateResponse] = await Promise.all([
+      chrome.runtime.sendMessage({ type: 'GET_CONVERSATION_HISTORY' }),
+      chrome.runtime.sendMessage({ type: 'GET_STATE' })
+    ]);
+
+    const history = historyResponse.history || [];
+    const state = stateResponse || {};
+    const config = state.config || {};
+    const initialPrompt = config.initialPrompt || '';
+    const templateType = config.templateType || null;
+
+    if (history.length === 0) {
+      showToast('⚠️ No conversation to download', 'error');
+      return;
+    }
+
+    // Build text content
+    let content = 'AI Chat Bridge - Conversation Export\n';
+    content += '='.repeat(50) + '\n\n';
+
+    // Add topic/initial prompt at the top
+    if (initialPrompt) {
+      content += 'TOPIC / INITIAL PROMPT:\n';
+      content += '-'.repeat(50) + '\n';
+      content += initialPrompt + '\n\n';
+      if (templateType) {
+        content += `Template Type: ${templateType.toUpperCase()}\n\n`;
+      }
+      content += '='.repeat(50) + '\n\n';
+    }
+
+    // Add conversation messages
+    content += 'CONVERSATION:\n';
+    content += '='.repeat(50) + '\n\n';
+
+    history.forEach((msg, index) => {
+      const date = new Date(msg.timestamp);
+      const dateStr = date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+
+      content += `[${index + 1}] ${msg.role || `Participant ${msg.sessionNum}`} (${msg.platform || 'unknown'})\n`;
+      content += `Time: ${dateStr}\n`;
+      content += '-'.repeat(50) + '\n';
+      content += msg.content + '\n\n';
+    });
+
+    // Create download
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    a.href = url;
+    a.download = `ai-chat-bridge-conversation-${timestamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast('✅ Conversation downloaded', 'success');
+  } catch (error) {
+    spError('[Side Panel] Failed to download conversation:', error);
+    showToast('❌ Failed to download', 'error');
+  }
 }
 
 function showToast(message, type = 'success') {

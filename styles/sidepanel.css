@@ -20,9 +20,9 @@
   --accent-glow: rgba(255, 149, 0, 0.3);
   
   --agent-a-color: #ff9500;
-  --agent-a-bg: rgba(255, 149, 0, 0.1);
-  --agent-b-color: #ff6b00;
-  --agent-b-bg: rgba(255, 107, 0, 0.1);
+  --agent-a-bg: rgba(255, 149, 0, 0.12);
+  --agent-b-color: #3b82f6;
+  --agent-b-bg: rgba(59, 130, 246, 0.12);
   
   --success: #34C759;
   --success-bg: rgba(52, 199, 89, 0.15);
@@ -59,8 +59,8 @@ body.dark-theme,
   
   --agent-a-color: #ff9500;
   --agent-a-bg: rgba(255, 149, 0, 0.15);
-  --agent-b-color: #ff6b00;
-  --agent-b-bg: rgba(255, 107, 0, 0.15);
+  --agent-b-color: #3b82f6;
+  --agent-b-bg: rgba(59, 130, 246, 0.15);
   
   --success: #34C759;
   --success-bg: rgba(52, 199, 89, 0.2);
@@ -1203,6 +1203,38 @@ body {
   gap: 8px;
 }
 
+/* Ensure expand/collapse buttons are properly styled */
+#expand-conversation-btn,
+#collapse-conversation-btn {
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 6px !important;
+}
+
+#expand-conversation-btn svg,
+#collapse-conversation-btn svg {
+  width: 16px !important;
+  height: 16px !important;
+  display: block !important;
+}
+
+/* Ensure download button and its icon are visible */
+#download-conversation-btn {
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 6px !important;
+}
+
+#download-conversation-btn svg {
+  width: 16px !important;
+  height: 16px !important;
+  display: block !important;
+}
+
 .template-quick-select {
   display: flex;
   gap: 4px;
@@ -1375,13 +1407,7 @@ body {
   letter-spacing: 0.5px;
 }
 
-.agent-a .message-role {
-  color: var(--agent-a-color);
-}
-
-.agent-b .message-role {
-  color: var(--agent-b-color);
-}
+/* Participant colors are now set inline in HTML */
 
 .message-time {
   font-size: 9px;
@@ -1497,6 +1523,46 @@ body {
   color: var(--text-secondary);
   border: 1px solid var(--border-subtle);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* Conversation Focus Mode - Hide header, tabs, footer */
+body.conversation-focus-mode .header,
+body.conversation-focus-mode .tab-navigation,
+body.conversation-focus-mode .footer {
+  display: none !important;
+}
+
+body.conversation-focus-mode .container {
+  padding: 8px;
+  gap: 8px;
+}
+
+body.conversation-focus-mode .tab-pages {
+  height: 100%;
+}
+
+body.conversation-focus-mode #chat-tab-page {
+  height: 100%;
+  display: flex !important;
+  flex-direction: column;
+}
+
+body.conversation-focus-mode .chat-header {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  flex-shrink: 0;
+}
+
+body.conversation-focus-mode .conversation-container {
+  flex: 1;
+  min-height: 0;
+}
+
+body.conversation-focus-mode .chat-input-container {
+  flex-shrink: 0;
+  margin-top: 8px;
+  padding-top: 8px;
 }
 
 .turn-indicator {
