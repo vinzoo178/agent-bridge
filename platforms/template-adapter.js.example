@@ -1,0 +1,129 @@
+// Template Platform Adapter
+// Copy this file and rename to add support for a new AI chat platform
+// 
+// HOW TO ADD A NEW PLATFORM:
+// 1. Copy this file and rename (e.g., claude-adapter.js)
+// 2. Update class name and properties
+// 3. Use browser DevTools to find correct selectors
+// 4. Register in platforms/index.js
+// 5. Add URL patterns to manifest.json
+
+class TemplatePlatformAdapter extends BasePlatformAdapter {
+  constructor() {
+    super();
+    
+    // REQUIRED: Platform name (lowercase)
+    this.name = 'template';
+    
+    // REQUIRED: URL patterns to match
+    this.hostPatterns = ['example.com', 'chat.example.com'];
+    
+    // REQUIRED: DOM Selectors
+    // Use browser DevTools (F12) to find these:
+    // 1. Right-click element → Inspect
+    // 2. Find unique class, id, or attribute
+    this.selectors = {
+      // Input field where user types messages
+      input: [
+        'textarea#message-input',
+        'div[contenteditable="true"]',
+        'textarea[placeholder*="Message"]',
+      ],
+      
+      // Send button
+      sendButton: [
+        'button[aria-label*="Send"]',
+        'button[type="submit"]',
+        '.send-button',
+      ],
+      
+      // AI response containers (all responses on page)
+      responses: [
+        '.assistant-message',
+        '[data-role="assistant"]',
+        '.ai-response',
+      ],
+      
+      // Loading indicators (shown while AI is generating)
+      loading: [
+        '.loading',
+        '.typing-indicator',
+        'button[aria-label*="Stop"]',
+      ],
+      
+      // Stop button (optional)
+      stopButton: [
+        'button[aria-label*="Stop"]',
+      ]
+    };
+  }
+  
+  // Override if input field needs special handling
+  getInputField() {
+    return this.findFirst(this.selectors.input);
+  }
+  
+  // Override if send button needs special handling
+  getSendButton() {
+    const btn = this.findFirst(this.selectors.sendButton);
+    return (btn && !btn.disabled) ? btn : null;
+  }
+  
+  // Override if response detection needs special handling
+  getResponses() {
+    return this.findAll(this.selectors.responses);
+  }
+  
+  // Override if loading detection needs special handling
+  isGenerating() {
+    // Check stop button
+    const stopBtn = this.findFirst(this.selectors.stopButton);
+    if (stopBtn && stopBtn.offsetParent !== null) {
+      return true;
+    }
+    
+    // Check loading indicators
+    for (const selector of this.selectors.loading) {
+      const el = document.querySelector(selector);
+      if (el && el.offsetParent !== null) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  // Override if text input needs special handling
+  async setInputText(text) {
+    const input = this.getInputField();
+    if (!input) return false;
+    
+    input.focus();
+    await this.sleep(100);
+    
+    // Handle different input types
+    if (input.tagName === 'TEXTAREA') {
+      input.value = text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if (input.contentEditable === 'true') {
+      // For contenteditable divs
+      input.innerHTML = '';
+      input.textContent = text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    
+    return true;
+  }
+}
+
+// IMPORTANT: Register adapter in platforms/index.js:
+// if (typeof TemplatePlatformAdapter !== 'undefined') {
+//   PlatformRegistry.register(TemplatePlatformAdapter);
+// }
+
+// IMPORTANT: Add to manifest.json:
+// "host_permissions": ["https://example.com/*"],
+// "content_scripts": [{ "matches": ["https://example.com/*"], ... }]
+
+window.TemplatePlatformAdapter = TemplatePlatformAdapter;
+

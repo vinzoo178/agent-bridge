@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Chat Bridge</title>
+  <link rel="stylesheet" href="styles/popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">🤖</span>
+        <h1>AI Chat Bridge</h1>
+      </div>
+      <div class="status-badge" id="global-status">
+        <span class="status-indicator"></span>
+        <span class="status-label">Inactive</span>
+      </div>
+    </header>
+
+    <!-- Sessions Panel -->
+    <section class="panel sessions-panel">
+      <h2 class="panel-title">
+        <span class="icon">👥</span>
+        Sessions
+      </h2>
+      
+      <div class="sessions-grid">
+        <!-- Session 1 -->
+        <div class="session-card" id="session1-card">
+          <div class="session-header">
+            <span class="session-label">Agent A</span>
+            <span class="session-status disconnected" id="session1-status">Disconnected</span>
+          </div>
+          <div class="session-platform" id="session1-platform">
+            <span class="platform-icon">—</span>
+            <span>Not connected</span>
+          </div>
+        </div>
+        
+        <!-- Session 2 -->
+        <div class="session-card" id="session2-card">
+          <div class="session-header">
+            <span class="session-label">Agent B</span>
+            <span class="session-status disconnected" id="session2-status">Disconnected</span>
+          </div>
+          <div class="session-platform" id="session2-platform">
+            <span class="platform-icon">—</span>
+            <span>Not connected</span>
+          </div>
+        </div>
+      </div>
+      
+      <p class="help-text">
+        Open Gemini or ChatGPT in two tabs and register them as Agent A and Agent B
+      </p>
+    </section>
+
+    <!-- Configuration Panel -->
+    <section class="panel config-panel">
+      <h2 class="panel-title">
+        <span class="icon">⚙️</span>
+        Configuration
+      </h2>
+      
+      <div class="config-grid">
+        <div class="config-item">
+          <label for="max-length">Max Message Length</label>
+          <div class="input-group">
+            <input type="number" id="max-length" value="500" min="100" max="2000">
+            <span class="input-suffix">chars</span>
+          </div>
+        </div>
+        
+        <div class="config-item">
+          <label for="reply-delay">Reply Delay</label>
+          <div class="input-group">
+            <input type="number" id="reply-delay" value="2000" min="500" max="10000" step="500">
+            <span class="input-suffix">ms</span>
+          </div>
+        </div>
+        
+        <div class="config-item">
+          <label for="max-turns">Max Turns</label>
+          <div class="input-group">
+            <input type="number" id="max-turns" value="50" min="5" max="200">
+            <span class="input-suffix">turns</span>
+          </div>
+        </div>
+      </div>
+      
+      <button class="btn btn-secondary" id="save-config">
+        <span class="btn-icon">💾</span>
+        Save Configuration
+      </button>
+    </section>
+
+    <!-- Initial Prompt Panel -->
+    <section class="panel prompt-panel">
+      <h2 class="panel-title">
+        <span class="icon">💬</span>
+        Initial Prompt
+      </h2>
+      
+      <textarea 
+        id="initial-prompt" 
+        placeholder="Enter the initial prompt to start the conversation between the two AI agents..."
+        rows="4"
+      ></textarea>
+      
+      <div class="prompt-templates">
+        <span class="template-label">Quick templates:</span>
+        <div class="template-buttons">
+          <button class="template-btn" data-template="debate">Debate</button>
+          <button class="template-btn" data-template="story">Story</button>
+          <button class="template-btn" data-template="qa">Q&A</button>
+          <button class="template-btn" data-template="brainstorm">Brainstorm</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controls -->
+    <section class="controls-section">
+      <button class="btn btn-primary btn-large" id="start-btn" disabled>
+        <span class="btn-icon">▶️</span>
+        Start Conversation
+      </button>
+      <button class="btn btn-danger btn-large" id="stop-btn" disabled>
+        <span class="btn-icon">⏹️</span>
+        Stop
+      </button>
+    </section>
+
+    <!-- Conversation History -->
+    <section class="panel conversation-panel">
+      <div class="panel-header">
+        <h2 class="panel-title">
+          <span class="icon">📜</span>
+          Conversation History
+          <span class="message-count" id="message-count">0</span>
+        </h2>
+        <button class="btn btn-ghost" id="clear-history">
+          <span>🗑️</span>
+          Clear
+        </button>
+      </div>
+      
+      <div class="conversation-container" id="conversation-history">
+        <div class="empty-state">
+          <span class="empty-icon">💭</span>
+          <p>No messages yet. Start a conversation!</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>AI Chat Bridge v1.0</span>
+      <a href="#" id="help-link">Help</a>
+    </footer>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Chat Bridge</title>
+  <link rel="stylesheet" href="styles/sidepanel.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">🤖</span>
+        <h1>AI Chat Bridge</h1>
+      </div>
+      <div class="status-badge" id="global-status">
+        <span class="status-indicator"></span>
+        <span class="status-label">Inactive</span>
+      </div>
+    </header>
+
+    <!-- Sessions Panel -->
+    <section class="panel sessions-panel" id="sessions-panel">
+      <h2 class="panel-title clickable" id="sessions-toggle">
+        <span class="icon">👥</span>
+        Sessions
+        <span class="toggle-icon">▼</span>
+      </h2>
+      
+      <div class="sessions-grid">
+        <!-- Session 1 -->
+        <div class="session-card" id="session1-card">
+          <div class="session-header">
+            <span class="session-label">Agent A</span>
+            <span class="session-status disconnected" id="session1-status">Disconnected</span>
+          </div>
+          <div class="session-platform" id="session1-platform">
+            <span class="platform-icon">—</span>
+            <span>Not connected</span>
+          </div>
+        </div>
+        
+        <!-- Session 2 -->
+        <div class="session-card" id="session2-card">
+          <div class="session-header">
+            <span class="session-label">Agent B</span>
+            <span class="session-status disconnected" id="session2-status">Disconnected</span>
+          </div>
+          <div class="session-platform" id="session2-platform">
+            <span class="platform-icon">—</span>
+            <span>Not connected</span>
+          </div>
+        </div>
+      </div>
+      
+      <p class="help-text">
+        💡 Open Gemini or ChatGPT in two tabs, then click overlay buttons to register as Agent A/B
+      </p>
+    </section>
+
+    <!-- Configuration Panel -->
+    <section class="panel config-panel collapsed" id="config-panel">
+      <h2 class="panel-title clickable" id="config-toggle">
+        <span class="icon">⚙️</span>
+        Configuration
+        <span class="toggle-icon">▼</span>
+      </h2>
+      
+      <div class="panel-content">
+      <div class="config-grid">
+        <div class="config-item">
+          <label for="reply-delay">Reply Delay</label>
+          <div class="input-group">
+            <input type="number" id="reply-delay" value="2000" min="1000" max="10000" step="500">
+            <span class="input-suffix">ms</span>
+          </div>
+        </div>
+        
+        <div class="config-item">
+          <label for="max-turns">Max Turns</label>
+          <div class="input-group">
+            <input type="number" id="max-turns" value="50" min="5" max="200">
+          </div>
+        </div>
+        
+        <div class="config-item">
+          <label for="context-messages">Context</label>
+          <div class="input-group">
+            <input type="number" id="context-messages" value="4" min="0" max="10">
+            <span class="input-suffix">msgs</span>
+          </div>
+        </div>
+      </div>
+        
+        <button class="btn btn-secondary btn-sm" id="save-config">
+          <span class="btn-icon">💾</span>
+          Save Config
+        </button>
+      </div>
+    </section>
+
+    <!-- Initial Prompt Panel -->
+    <section class="panel prompt-panel" id="prompt-panel">
+      <h2 class="panel-title clickable" id="prompt-toggle">
+        <span class="icon">💬</span>
+        Start Conversation
+        <span class="toggle-icon">▼</span>
+      </h2>
+      
+      <div class="topic-input-section">
+        <label for="topic-input">📝 Topic / Chủ đề:</label>
+        <input 
+          type="text" 
+          id="topic-input" 
+          placeholder="Ví dụ: AI có thể thay thế con người không?"
+        >
+      </div>
+      
+      <div class="template-section">
+        <label>🎯 Chọn loại hội thoại:</label>
+        <div class="prompt-templates">
+          <button class="template-btn" data-template="debate">🎭 Debate</button>
+          <button class="template-btn" data-template="story">📖 Story</button>
+          <button class="template-btn" data-template="qa">❓ Q&A</button>
+          <button class="template-btn" data-template="brainstorm">💡 Brainstorm</button>
+        </div>
+      </div>
+      
+      <div class="generated-prompt-section">
+        <label>📋 Generated Prompt:</label>
+        <textarea 
+          id="initial-prompt" 
+          placeholder="Nhập chủ đề ở trên và chọn loại để tạo prompt..."
+          rows="4"
+        ></textarea>
+      </div>
+      
+      <!-- Controls -->
+      <div class="controls-section">
+        <button class="btn btn-primary" id="start-btn" disabled>
+          <span class="btn-icon">▶️</span>
+          Start
+        </button>
+        <button class="btn btn-danger" id="stop-btn" disabled>
+          <span class="btn-icon">⏹️</span>
+          Stop
+        </button>
+      </div>
+    </section>
+
+    <!-- Conversation History -->
+    <section class="panel conversation-panel">
+      <div class="panel-header">
+        <h2 class="panel-title">
+          <span class="icon">📜</span>
+          Conversation
+          <span class="message-count" id="message-count">0</span>
+        </h2>
+        <button class="btn btn-ghost btn-sm" id="clear-history">
+          🗑️ Clear
+        </button>
+      </div>
+      
+      <div class="conversation-container" id="conversation-history">
+        <div class="empty-state">
+          <span class="empty-icon">💭</span>
+          <p>No messages yet</p>
+          <p class="empty-hint">Start a conversation to see messages here</p>
+        </div>
+      </div>
+      
+      <!-- Auto-scroll toggle -->
+      <div class="auto-scroll-toggle">
+        <label>
+          <input type="checkbox" id="auto-scroll" checked>
+          Auto-scroll
+        </label>
+      </div>
+    </section>
+
+    <!-- Debug Panel -->
+    <section class="panel debug-panel collapsed" id="debug-panel">
+      <h2 class="panel-title clickable" id="debug-toggle">
+        <span class="icon">🔧</span>
+        Debug Logs
+        <span class="toggle-icon">▼</span>
+      </h2>
+      
+      <div class="panel-content">
+        <div class="debug-controls">
+          <button class="btn btn-secondary btn-sm" id="refresh-logs">
+            🔄 Refresh
+          </button>
+          <button class="btn btn-secondary btn-sm" id="download-logs">
+            📥 Download Logs
+          </button>
+          <button class="btn btn-ghost btn-sm" id="clear-logs">
+            🗑️ Clear
+          </button>
+        </div>
+        
+        <div class="log-stats">
+          <span id="log-count">0 logs</span>
+        </div>
+        
+        <div class="log-container" id="log-container">
+          <div class="empty-state">
+            <p>Click "Refresh" to load logs</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>AI Chat Bridge v1.2</span>
+      <span class="turn-indicator" id="turn-indicator">Idle</span>
+    </footer>
+  </div>
+  
+  <script src="sidepanel.js"></script>
+</body>
+</html>
+
