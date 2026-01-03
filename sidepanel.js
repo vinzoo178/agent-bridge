@@ -9,16 +9,12 @@ const elements = {
   session2Card: document.getElementById('session2-card'),
   session2Status: document.getElementById('session2-status'),
   session2Platform: document.getElementById('session2-platform'),
-  configPanel: document.getElementById('config-panel'),
-  configToggle: document.getElementById('config-toggle'),
   replyDelay: document.getElementById('reply-delay'),
   maxTurns: document.getElementById('max-turns'),
   contextMessages: document.getElementById('context-messages'),
   saveConfig: document.getElementById('save-config'),
   topicInput: document.getElementById('topic-input'),
   initialPrompt: document.getElementById('initial-prompt'),
-  promptPanel: document.getElementById('prompt-panel'),
-  sessionsPanel: document.querySelector('.sessions-panel'),
   startBtn: document.getElementById('start-btn'),
   stopBtn: document.getElementById('stop-btn'),
   conversationHistory: document.getElementById('conversation-history'),
@@ -90,11 +86,11 @@ Bắt đầu với MỘT câu hỏi đầu tiên!`,
 Bắt đầu với 1 ý tưởng đầu tiên!`
 };
 
-// Platform icons
+// Platform icons (SVG paths)
 const platformIcons = {
-  gemini: '✨',
-  chatgpt: '🤖',
-  unknown: '❓'
+  gemini: '<svg class="platform-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>',
+  chatgpt: '<svg class="platform-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>',
+  unknown: '<svg class="platform-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>'
 };
 
 // Track if config has been modified by user
@@ -105,6 +101,7 @@ let statePollingInterval = null;
 document.addEventListener('DOMContentLoaded', () => {
   console.log('[Side Panel] Initializing...');
   initializeUI();
+  loadTheme();
   loadState();
   loadConfigOnce(); // Load config only once at start
   setupEventListeners();
@@ -160,44 +157,39 @@ async function loadConfigOnce() {
 }
 
 function setupEventListeners() {
-  // Config panel toggle
-  elements.configToggle.addEventListener('click', () => {
-    elements.configPanel.classList.toggle('collapsed');
+  // Theme toggle
+  const themeToggle = document.getElementById('theme-toggle');
+  if (themeToggle) {
+    themeToggle.addEventListener('click', toggleTheme);
+  }
+  
+  // Tab navigation
+  document.querySelectorAll('.tab-icon').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const tabName = tab.dataset.tab;
+      switchTab(tabName);
+    });
   });
   
-  // Sessions panel toggle
-  document.getElementById('sessions-toggle').addEventListener('click', () => {
-    elements.sessionsPanel.classList.toggle('collapsed');
-  });
-  
-  // Prompt panel toggle
-  document.getElementById('prompt-toggle').addEventListener('click', () => {
-    elements.promptPanel.classList.toggle('collapsed');
-  });
-  
-  // Template buttons - generate prompt based on topic
-  document.querySelectorAll('.template-btn').forEach(btn => {
+  // Template quick buttons in chat header
+  document.querySelectorAll('.template-quick-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const template = btn.dataset.template;
-      const topic = elements.topicInput.value.trim();
       
       // Remove active class from all buttons
-      document.querySelectorAll('.template-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.template-quick-btn').forEach(b => b.classList.remove('active'));
       
       // Add active class to clicked button
       btn.classList.add('active');
       selectedTemplate = template;
       
-      if (!topic) {
-        showToast('⚠️ Vui lòng nhập chủ đề trước!', 'error');
-        elements.topicInput.focus();
-        return;
-      }
-      
-      if (promptGenerators[template]) {
-        const generatedPrompt = promptGenerators[template](topic);
-        elements.initialPrompt.value = generatedPrompt;
-        showToast('✅ Đã tạo prompt ' + template.toUpperCase() + '!', 'success');
+      // Auto-generate prompt if topic exists
+      const topic = elements.topicInput.value.trim();
+      if (topic && promptGenerators[template]) {
+        elements.initialPrompt.value = promptGenerators[template](topic);
+        showToast('✅ Template ' + template.toUpperCase() + ' selected', 'success');
+      } else {
+        showToast('✅ Template ' + template.toUpperCase() + ' selected', 'success');
       }
     });
   });
@@ -207,6 +199,16 @@ function setupEventListeners() {
     if (selectedTemplate && elements.topicInput.value.trim()) {
       const topic = elements.topicInput.value.trim();
       elements.initialPrompt.value = promptGenerators[selectedTemplate](topic);
+    }
+  });
+  
+  // Enter key to send (normal chat behavior)
+  elements.topicInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!elements.startBtn.disabled) {
+        startConversation();
+      }
     }
   });
   
@@ -251,7 +253,6 @@ function setupEventListeners() {
       case 'CONVERSATION_CLEARED':
         lastRenderedCount = 0;
         renderConversationHistory([]);
-        expandPanelsForSetup();
         break;
       case 'BACKEND_STATUS_UPDATE':
         updateBackendStatusUI(message.status);
@@ -259,6 +260,68 @@ function setupEventListeners() {
     }
     sendResponse({ received: true });
   });
+}
+
+// Theme management
+function loadTheme() {
+  try {
+    const savedTheme = localStorage.getItem('ai-bridge-theme') || 'light';
+    if (savedTheme === 'dark') {
+      document.body.classList.add('dark-theme');
+    } else {
+      document.body.classList.remove('dark-theme');
+    }
+  } catch (error) {
+    console.error('[Side Panel] Failed to load theme:', error);
+  }
+}
+
+function toggleTheme() {
+  const isDark = document.body.classList.toggle('dark-theme');
+  const theme = isDark ? 'dark' : 'light';
+  
+  try {
+    localStorage.setItem('ai-bridge-theme', theme);
+    showToast(isDark ? '🌙 Dark theme enabled' : '☀️ Light theme enabled', 'success');
+  } catch (error) {
+    console.error('[Side Panel] Failed to save theme:', error);
+  }
+}
+
+// Tab switching function
+function switchTab(tabName) {
+  console.log('[Side Panel] Switching to tab:', tabName);
+  
+  // Update tab icons
+  document.querySelectorAll('.tab-icon').forEach(tab => {
+    tab.classList.remove('active');
+  });
+  const activeTab = document.querySelector(`.tab-icon[data-tab="${tabName}"]`);
+  if (activeTab) {
+    activeTab.classList.add('active');
+    console.log('[Side Panel] Tab icon activated:', tabName);
+  } else {
+    console.error('[Side Panel] Tab icon not found:', tabName);
+  }
+  
+  // Update tab pages - hide all first
+  document.querySelectorAll('.tab-page').forEach(page => {
+    page.classList.remove('active');
+  });
+  
+  // Show the selected tab page
+  const activePage = document.getElementById(`${tabName}-tab-page`);
+  if (activePage) {
+    activePage.classList.add('active');
+    console.log('[Side Panel] Tab page activated:', tabName);
+  } else {
+    console.error('[Side Panel] Tab page not found:', `${tabName}-tab-page`);
+  }
+  
+  // Auto-refresh debug logs when opening debug tab
+  if (tabName === 'debug') {
+    setTimeout(() => refreshLogs(), 300);
+  }
 }
 
 // ============================================
@@ -321,24 +384,7 @@ function updateBackendStatusUI(status) {
   };
 }
 
-// Collapse panels when conversation is active
-function collapsePanelsForChat() {
-  elements.configPanel.classList.add('collapsed');
-  elements.sessionsPanel.classList.add('collapsed');
-  if (elements.promptPanel) {
-    elements.promptPanel.classList.add('collapsed');
-  }
-  document.querySelector('.conversation-panel').classList.add('expanded');
-}
-
-// Expand panels when setting up
-function expandPanelsForSetup() {
-  elements.sessionsPanel.classList.remove('collapsed');
-  if (elements.promptPanel) {
-    elements.promptPanel.classList.remove('collapsed');
-  }
-  document.querySelector('.conversation-panel').classList.remove('expanded');
-}
+// No longer needed - panels are now in tabs
 
 let wasActive = false;
 
@@ -350,14 +396,6 @@ function updateUI(state) {
   elements.globalStatus.className = `status-badge ${isActive ? 'active' : ''}`;
   elements.globalStatus.querySelector('.status-label').textContent = isActive ? 'Active' : 'Inactive';
   
-  // Auto-collapse/expand panels based on conversation state
-  if (isActive && !wasActive) {
-    // Just started - collapse panels
-    collapsePanelsForChat();
-  } else if (!isActive && wasActive) {
-    // Just stopped - expand panels
-    expandPanelsForSetup();
-  }
   wasActive = isActive;
   
   // Update session cards
@@ -395,11 +433,17 @@ function updateUI(state) {
   
   // Update turn indicator
   if (isActive) {
-    const turnText = state.currentTurn === 1 ? '🔵 Agent A đang trả lời...' : '🟢 Agent B đang trả lời...';
-    elements.turnIndicator.textContent = turnText;
+    const turnText = state.currentTurn === 1 ? 'Agent A đang trả lời...' : 'Agent B đang trả lời...';
+    const indicator = state.currentTurn === 1 ? 
+      '<svg class="inline w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>' :
+      '<svg class="inline w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>';
+    elements.turnIndicator.innerHTML = indicator + turnText;
     elements.turnIndicator.classList.add('active');
   } else {
-    elements.turnIndicator.textContent = state.session1.connected && state.session2.connected ? '✅ Ready' : '⏳ Waiting...';
+    const readyIcon = state.session1.connected && state.session2.connected ? 
+      '<svg class="inline w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>' :
+      '<svg class="inline w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>';
+    elements.turnIndicator.innerHTML = readyIcon + (state.session1.connected && state.session2.connected ? 'Ready' : 'Waiting...');
     elements.turnIndicator.classList.remove('active');
   }
 }
@@ -413,12 +457,14 @@ function updateSessionCard(card, statusEl, platformEl, connected, platform) {
   if (connected && platform) {
     const icon = platformIcons[platform] || platformIcons.unknown;
     platformEl.innerHTML = `
-      <span class="platform-icon">${icon}</span>
+      ${icon}
       <span>${platform.charAt(0).toUpperCase() + platform.slice(1)}</span>
     `;
   } else {
     platformEl.innerHTML = `
-      <span class="platform-icon">—</span>
+      <svg class="platform-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6"></path>
+      </svg>
       <span>Not connected</span>
     `;
   }
@@ -449,15 +495,25 @@ async function saveConfiguration() {
 }
 
 async function startConversation() {
-  const initialPrompt = elements.initialPrompt.value.trim();
+  const topic = elements.topicInput.value.trim();
   
-  if (!initialPrompt) {
-    showToast('⚠️ Please enter a prompt', 'error');
+  if (!topic) {
+    showToast('⚠️ Please enter a topic', 'error');
+    elements.topicInput.focus();
     return;
   }
   
+  // Generate prompt if template is selected, otherwise use topic directly
+  let initialPrompt = topic;
+  if (selectedTemplate && promptGenerators[selectedTemplate]) {
+    initialPrompt = promptGenerators[selectedTemplate](topic);
+  }
+  
+  // Store in hidden textarea for consistency
+  elements.initialPrompt.value = initialPrompt;
+  
   elements.startBtn.disabled = true;
-  elements.startBtn.textContent = 'Starting...';
+  elements.startBtn.innerHTML = '<svg class="btn-icon w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Starting...';
   
   try {
     const response = await chrome.runtime.sendMessage({
@@ -467,6 +523,8 @@ async function startConversation() {
     
     if (response.success) {
       showToast('🚀 Conversation started!', 'success');
+      // Clear input after starting
+      elements.topicInput.value = '';
     } else {
       showToast('❌ ' + (response.error || 'Failed to start'), 'error');
     }
@@ -477,7 +535,7 @@ async function startConversation() {
   
   // Reset button
   setTimeout(() => {
-    elements.startBtn.innerHTML = '<span class="btn-icon">▶️</span> Start';
+    elements.startBtn.innerHTML = '<svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Send';
     loadState();
   }, 500);
 }
@@ -490,13 +548,10 @@ async function stopConversation() {
     wasActive = false;
     elements.globalStatus.className = 'status-badge';
     elements.globalStatus.querySelector('.status-label').textContent = 'Inactive';
-    elements.turnIndicator.textContent = '⏹️ Stopped';
+    elements.turnIndicator.innerHTML = '<svg class="inline w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10h6v4H9z"></path></svg> Stopped';
     elements.turnIndicator.classList.remove('active');
     elements.startBtn.disabled = false;
     elements.stopBtn.disabled = true;
-    
-    // Expand panels back
-    expandPanelsForSetup();
     
     showToast('⏹️ Conversation stopped', 'success');
   } catch (error) {
@@ -631,8 +686,6 @@ async function checkServiceWorkerStatus() {
 }
 
 const debugElements = {
-  debugPanel: document.getElementById('debug-panel'),
-  debugToggle: document.getElementById('debug-toggle'),
   refreshLogs: document.getElementById('refresh-logs'),
   downloadLogs: document.getElementById('download-logs'),
   clearLogs: document.getElementById('clear-logs'),
@@ -640,16 +693,7 @@ const debugElements = {
   logCount: document.getElementById('log-count')
 };
 
-// Initialize debug panel
-if (debugElements.debugToggle) {
-  debugElements.debugToggle.addEventListener('click', () => {
-    debugElements.debugPanel.classList.toggle('collapsed');
-    // Auto-refresh when opening
-    if (!debugElements.debugPanel.classList.contains('collapsed')) {
-      refreshLogs();
-    }
-  });
-}
+// Debug panel is now handled by tab system
 
 if (debugElements.refreshLogs) {
   debugElements.refreshLogs.addEventListener('click', refreshLogs);
@@ -933,7 +977,7 @@ async function autoRegisterAgents() {
   const btn = document.getElementById('auto-register-btn');
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<span class="btn-icon">⏳</span> Registering...';
+    btn.innerHTML = '<svg class="btn-icon w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Registering...';
   }
   
   try {
@@ -954,7 +998,7 @@ async function autoRegisterAgents() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = '<span class="btn-icon">🔄</span> Auto-Register';
+      btn.innerHTML = '<svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Auto-Register';
     }
   }
 }

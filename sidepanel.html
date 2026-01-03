@@ -4,219 +4,284 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Chat Bridge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="styles/sidepanel.css">
+  <style>
+    /* Tailwind config for dark theme */
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            'bg-primary': '#0a0a12',
+            'bg-secondary': '#12121f',
+            'bg-tertiary': '#1a1a2e',
+            'accent-primary': '#6366f1',
+            'accent-secondary': '#8b5cf6',
+          }
+        }
+      }
+    }
+  </style>
 </head>
 <body>
   <div class="container">
     <!-- Header -->
-    <header class="header">
-      <div class="logo">
-        <span class="logo-icon">🤖</span>
-        <h1>AI Chat Bridge</h1>
+    <header class="header flex items-center justify-between">
+      <div class="logo flex items-center gap-2">
+        <svg class="logo-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+        </svg>
+        <h1 class="text-base font-bold">AI Chat Bridge</h1>
       </div>
-      <div class="header-status">
-        <div class="status-badge" id="global-status">
-          <span class="status-indicator"></span>
-          <span class="status-label">Inactive</span>
-        </div>
-        <div class="status-badge backend-status" id="backend-status" title="Backend Connection Status">
-          <span class="status-indicator" id="backend-indicator"></span>
-          <span class="status-label" id="backend-label">Backend</span>
+      <div class="header-actions flex items-center gap-2">
+        <button class="theme-toggle" id="theme-toggle" title="Toggle dark/light theme">
+          <svg class="w-4 h-4 theme-icon-light" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+          </svg>
+          <svg class="w-4 h-4 theme-icon-dark" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display: none;">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+          </svg>
+        </button>
+        <div class="header-status flex items-center gap-2">
+          <div class="status-badge flex items-center gap-1.5" id="global-status">
+            <span class="status-indicator"></span>
+            <span class="status-label text-xs font-semibold uppercase">Inactive</span>
+          </div>
+          <div class="status-badge backend-status flex items-center gap-1.5" id="backend-status" title="Backend Connection Status">
+            <span class="status-indicator" id="backend-indicator"></span>
+            <span class="status-label text-xs font-semibold uppercase" id="backend-label">Backend</span>
+          </div>
         </div>
       </div>
     </header>
 
-    <!-- Sessions Panel -->
-    <section class="panel sessions-panel" id="sessions-panel">
-      <h2 class="panel-title clickable" id="sessions-toggle">
-        <span class="icon">👥</span>
-        Sessions
-        <span class="toggle-icon">▼</span>
-      </h2>
-      
-      <div class="sessions-grid">
-        <!-- Session 1 -->
-        <div class="session-card" id="session1-card">
-          <div class="session-header">
-            <span class="session-label">Agent A</span>
-            <span class="session-status disconnected" id="session1-status">Disconnected</span>
-          </div>
-          <div class="session-platform" id="session1-platform">
-            <span class="platform-icon">—</span>
-            <span>Not connected</span>
-          </div>
-        </div>
-        
-        <!-- Session 2 -->
-        <div class="session-card" id="session2-card">
-          <div class="session-header">
-            <span class="session-label">Agent B</span>
-            <span class="session-status disconnected" id="session2-status">Disconnected</span>
-          </div>
-          <div class="session-platform" id="session2-platform">
-            <span class="platform-icon">—</span>
-            <span>Not connected</span>
-          </div>
-        </div>
-      </div>
-      
-      <div class="session-controls">
-        <button class="btn btn-secondary btn-sm" id="auto-register-btn">
-          <span class="btn-icon">🔄</span>
-          Auto-Register
-        </button>
-        <button class="btn btn-secondary btn-sm" id="swap-agents-btn" disabled>
-          <span class="btn-icon">⇄</span>
-          Swap Agents
-        </button>
-      </div>
-      
-      <p class="help-text">
-        💡 Extension will auto-register when you open 2 chat tabs. Or click "Auto-Register" to register manually.
-      </p>
-    </section>
+    <!-- Tab Navigation -->
+    <div class="tab-navigation flex items-center justify-center gap-1.5">
+      <button class="tab-icon active flex items-center justify-center" data-tab="chat" title="Chat">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+        </svg>
+      </button>
+      <button class="tab-icon flex items-center justify-center" data-tab="sessions" title="Sessions">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+        </svg>
+      </button>
+      <button class="tab-icon flex items-center justify-center" data-tab="config" title="Configuration">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+        </svg>
+      </button>
+      <button class="tab-icon flex items-center justify-center" data-tab="debug" title="Debug Logs">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+        </svg>
+      </button>
+    </div>
 
-    <!-- Configuration Panel -->
-    <section class="panel config-panel collapsed" id="config-panel">
-      <h2 class="panel-title clickable" id="config-toggle">
-        <span class="icon">⚙️</span>
-        Configuration
-        <span class="toggle-icon">▼</span>
-      </h2>
-      
-      <div class="panel-content">
-      <div class="config-grid">
-        <div class="config-item">
-          <label for="reply-delay">Reply Delay</label>
-          <div class="input-group">
-            <input type="number" id="reply-delay" value="2000" min="1000" max="10000" step="500">
-            <span class="input-suffix">ms</span>
+    <!-- Tab Pages Container -->
+    <div class="tab-pages">
+      <!-- Chat Tab Page -->
+      <section class="tab-page active" id="chat-tab-page">
+        <div class="chat-header flex items-center justify-between">
+          <div class="chat-header-left flex items-center gap-2">
+            <h2 class="chat-title text-xs font-semibold uppercase">Conversation</h2>
+            <span class="message-count flex items-center justify-center min-w-[20px] h-[18px] px-1.5 text-[10px] font-bold rounded-full" id="message-count">0</span>
+          </div>
+          <div class="chat-header-right flex items-center gap-2">
+            <button class="btn btn-ghost btn-sm flex items-center justify-center" id="clear-history" title="Clear history">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+              </svg>
+            </button>
+            <div class="template-quick-select flex items-center gap-1">
+              <button class="template-quick-btn flex items-center justify-center" data-template="debate" title="Debate">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path>
+                </svg>
+              </button>
+              <button class="template-quick-btn flex items-center justify-center" data-template="story" title="Story">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                </svg>
+              </button>
+              <button class="template-quick-btn flex items-center justify-center" data-template="qa" title="Q&A">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+              </button>
+              <button class="template-quick-btn flex items-center justify-center" data-template="brainstorm" title="Brainstorm">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
         
-        <div class="config-item">
-          <label for="max-turns">Max Turns</label>
-          <div class="input-group">
-            <input type="number" id="max-turns" value="50" min="5" max="200">
+        <div class="conversation-container" id="conversation-history">
+          <div class="empty-state">
+            <svg class="empty-icon w-9 h-9" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+            </svg>
+            <p>No messages yet</p>
+            <p class="empty-hint">Enter a topic and click send to start</p>
           </div>
         </div>
         
-        <div class="config-item">
-          <label for="context-messages">Context</label>
-          <div class="input-group">
-            <input type="number" id="context-messages" value="4" min="0" max="10">
-            <span class="input-suffix">msgs</span>
+        <div class="chat-input-container">
+          <div class="chat-input-wrapper flex items-center gap-2">
+            <input 
+              type="text" 
+              id="topic-input" 
+              class="chat-input flex-1"
+              placeholder="Enter topic or message..."
+              autocomplete="off"
+            >
+            <button class="btn btn-primary btn-send flex items-center gap-1.5" id="start-btn" disabled>
+              <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              Send
+            </button>
+          </div>
+          <div class="chat-controls flex items-center justify-between">
+            <button class="btn btn-danger btn-sm flex items-center gap-1.5" id="stop-btn" disabled>
+              <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10h6v4H9z"></path>
+              </svg>
+              Stop
+            </button>
+            <label class="auto-scroll-toggle flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" id="auto-scroll" checked class="cursor-pointer">
+              <span class="text-[10px]">Auto-scroll</span>
+            </label>
           </div>
         </div>
-      </div>
         
-        <button class="btn btn-secondary btn-sm" id="save-config">
-          <span class="btn-icon">💾</span>
-          Save Config
-        </button>
-      </div>
-    </section>
-
-    <!-- Initial Prompt Panel -->
-    <section class="panel prompt-panel" id="prompt-panel">
-      <h2 class="panel-title clickable" id="prompt-toggle">
-        <span class="icon">💬</span>
-        Start Conversation
-        <span class="toggle-icon">▼</span>
-      </h2>
-      
-      <div class="topic-input-section">
-        <label for="topic-input">📝 Topic / Chủ đề:</label>
-        <input 
-          type="text" 
-          id="topic-input" 
-          placeholder="Ví dụ: AI có thể thay thế con người không?"
-        >
-      </div>
-      
-      <div class="template-section">
-        <label>🎯 Chọn loại hội thoại:</label>
-        <div class="prompt-templates">
-          <button class="template-btn" data-template="debate">🎭 Debate</button>
-          <button class="template-btn" data-template="story">📖 Story</button>
-          <button class="template-btn" data-template="qa">❓ Q&A</button>
-          <button class="template-btn" data-template="brainstorm">💡 Brainstorm</button>
-        </div>
-      </div>
-      
-      <div class="generated-prompt-section">
-        <label>📋 Generated Prompt:</label>
+        <!-- Hidden textarea for prompt generation (used internally) -->
         <textarea 
           id="initial-prompt" 
-          placeholder="Nhập chủ đề ở trên và chọn loại để tạo prompt..."
-          rows="4"
+          style="display: none;"
         ></textarea>
-      </div>
-      
-      <!-- Controls -->
-      <div class="controls-section">
-        <button class="btn btn-primary" id="start-btn" disabled>
-          <span class="btn-icon">▶️</span>
-          Start
-        </button>
-        <button class="btn btn-danger" id="stop-btn" disabled>
-          <span class="btn-icon">⏹️</span>
-          Stop
-        </button>
-      </div>
-    </section>
+      </section>
 
-    <!-- Conversation History -->
-    <section class="panel conversation-panel">
-      <div class="panel-header">
-        <h2 class="panel-title">
-          <span class="icon">📜</span>
-          Conversation
-          <span class="message-count" id="message-count">0</span>
-        </h2>
-        <button class="btn btn-ghost btn-sm" id="clear-history">
-          🗑️ Clear
-        </button>
-      </div>
-      
-      <div class="conversation-container" id="conversation-history">
-        <div class="empty-state">
-          <span class="empty-icon">💭</span>
-          <p>No messages yet</p>
-          <p class="empty-hint">Start a conversation to see messages here</p>
+      <!-- Sessions Tab Page -->
+      <section class="tab-page" id="sessions-tab-page">
+        <div class="sessions-grid">
+          <!-- Session 1 -->
+          <div class="session-card" id="session1-card">
+            <div class="session-header">
+              <span class="session-label">Agent A</span>
+              <span class="session-status disconnected" id="session1-status">Disconnected</span>
+            </div>
+            <div class="session-platform" id="session1-platform">
+              <span class="platform-icon">—</span>
+              <span>Not connected</span>
+            </div>
+          </div>
+          
+          <!-- Session 2 -->
+          <div class="session-card" id="session2-card">
+            <div class="session-header">
+              <span class="session-label">Agent B</span>
+              <span class="session-status disconnected" id="session2-status">Disconnected</span>
+            </div>
+            <div class="session-platform" id="session2-platform">
+              <span class="platform-icon">—</span>
+              <span>Not connected</span>
+            </div>
+          </div>
         </div>
-      </div>
-      
-      <!-- Auto-scroll toggle -->
-      <div class="auto-scroll-toggle">
-        <label>
-          <input type="checkbox" id="auto-scroll" checked>
-          Auto-scroll
-        </label>
-      </div>
-    </section>
+        
+        <div class="session-controls">
+          <button class="btn btn-secondary btn-sm" id="auto-register-btn">
+            <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Auto-Register
+          </button>
+          <button class="btn btn-secondary btn-sm" id="swap-agents-btn" disabled>
+            <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+            </svg>
+            Swap Agents
+          </button>
+        </div>
+        
+        <p class="help-text">
+          <svg class="inline w-4 h-4 mr-1 align-middle" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          Extension will auto-register when you open 2 chat tabs. Or click "Auto-Register" to register manually.
+        </p>
+      </section>
 
-    <!-- Debug Panel -->
-    <section class="panel debug-panel collapsed" id="debug-panel">
-      <h2 class="panel-title clickable" id="debug-toggle">
-        <span class="icon">🔧</span>
-        Debug Logs
-        <span class="toggle-icon">▼</span>
-      </h2>
-      
-      <div class="panel-content">
+      <!-- Configuration Tab Page -->
+      <section class="tab-page" id="config-tab-page">
+        <div class="config-grid">
+          <div class="config-item">
+            <label for="reply-delay">Reply Delay</label>
+            <div class="input-group">
+              <input type="number" id="reply-delay" value="2000" min="1000" max="10000" step="500">
+              <span class="input-suffix">ms</span>
+            </div>
+          </div>
+          
+          <div class="config-item">
+            <label for="max-turns">Max Turns</label>
+            <div class="input-group">
+              <input type="number" id="max-turns" value="50" min="5" max="200">
+            </div>
+          </div>
+          
+          <div class="config-item">
+            <label for="context-messages">Context</label>
+            <div class="input-group">
+              <input type="number" id="context-messages" value="4" min="0" max="10">
+              <span class="input-suffix">msgs</span>
+            </div>
+          </div>
+        </div>
+        
+        <button class="btn btn-secondary btn-sm" id="save-config">
+          <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path>
+          </svg>
+          Save Config
+        </button>
+      </section>
+
+      <!-- Debug Tab Page -->
+      <section class="tab-page" id="debug-tab-page">
         <div class="debug-controls">
           <button class="btn btn-secondary btn-sm" id="refresh-logs">
-            🔄 Refresh
+            <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Refresh
           </button>
           <button class="btn btn-secondary btn-sm" id="download-logs">
-            📥 Download Logs
+            <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+            </svg>
+            Download Logs
           </button>
           <button class="btn btn-secondary btn-sm" id="test-log">
-            🧪 Test Log
+            <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+            </svg>
+            Test Log
           </button>
           <button class="btn btn-ghost btn-sm" id="clear-logs">
-            🗑️ Clear
+            <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            Clear
           </button>
         </div>
         
@@ -229,8 +294,8 @@
             <p>Click "Refresh" to load logs</p>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </div>
 
     <!-- Footer -->
     <footer class="footer">
