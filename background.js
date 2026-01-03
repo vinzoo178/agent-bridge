@@ -1184,8 +1184,13 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
 
   // If this is early in conversation (< 3 messages), add length limit reminder
   if (history.length <= 2) {
+    // Add initial prompt if available
+    let message = latestResponse;
+    if (state.config.initialPrompt && state.config.initialPrompt.trim()) {
+      message = '📌 **CHỦ ĐỀ CHÍNH:**\n' + state.config.initialPrompt + '\n\n─'.repeat(40) + '\n\n' + message;
+    }
     // Add length limit instruction even for early messages
-    return latestResponse + '\n\n⚠️ **LƯU Ý:** Giữ câu trả lời NGẮN GỌN (2-4 câu, dưới 200 từ). KHÔNG viết dài dòng.';
+    return message + '\n\n⚠️ **LƯU Ý:** Giữ câu trả lời NGẮN GỌN (2-4 câu, dưới 200 từ). KHÔNG viết dài dòng.';
   }
 
   // Get recent messages for context (excluding the latest one we just added)
@@ -1196,7 +1201,16 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
   }
 
   // Build context string
-  let contextStr = '📋 **CONTEXT - Cuộc hội thoại gần đây:**\n';
+  let contextStr = '';
+  
+  // Add original topic/prompt at the beginning if available
+  if (state.config.initialPrompt && state.config.initialPrompt.trim()) {
+    contextStr += '📌 **CHỦ ĐỀ / CÂU HỎI GỐC:**\n';
+    contextStr += state.config.initialPrompt + '\n\n';
+    contextStr += '─'.repeat(40) + '\n\n';
+  }
+  
+  contextStr += '📋 **CONTEXT - Cuộc hội thoại gần đây:**\n';
   contextStr += '─'.repeat(40) + '\n';
 
   recentMessages.forEach((msg, index) => {
@@ -1215,7 +1229,8 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
   contextStr += '⚠️ Trả lời NGẮN GỌN - CHỈ 2-4 CÂU (tối đa 200 TỪ)\n';
   contextStr += '⚠️ KHÔNG viết dài dòng, KHÔNG liệt kê nhiều ý\n';
   contextStr += '⚠️ Giữ câu trả lời SÚC TÍCH và ĐIỂM QUAN TRỌNG NHẤT\n';
-  contextStr += '👉 Hãy tiếp tục cuộc thảo luận dựa trên context ở trên với câu trả lời NGẮN GỌN (2-4 câu, dưới 200 từ).';
+  contextStr += '⚠️ TẬP TRUNG vào chủ đề gốc đã nêu ở trên\n';
+  contextStr += '👉 Hãy tiếp tục cuộc thảo luận dựa trên context ở trên, TẬP TRUNG vào chủ đề gốc, với câu trả lời NGẮN GỌN (2-4 câu, dưới 200 từ).';
 
   bgLog('[Background] Built message with', recentMessages.length, 'context messages');
 
