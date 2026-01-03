@@ -17,7 +17,9 @@
     "https://chat.deepseek.com/*",
     "https://*.deepseek.com/*",
     "https://duckduckgo.com/*",
-    "https://duck.ai/*"
+    "https://duck.ai/*",
+    "https://chat.z.ai/*",
+    "https://z.ai/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -42,7 +44,9 @@
         "https://chat.deepseek.com/*",
         "https://*.deepseek.com/*",
         "https://duckduckgo.com/*",
-        "https://duck.ai/*"
+        "https://duck.ai/*",
+        "https://chat.z.ai/*",
+        "https://z.ai/*"
       ],
       "js": [
         "logger.js",
@@ -51,6 +55,7 @@
         "platforms/chatgpt-adapter.js",
         "platforms/deepseek-adapter.js",
         "platforms/duckduckgo-adapter.js",
+        "platforms/z-ai-adapter.js",
         "platforms/index.js",
         "agent-registration/state.js",
         "agent-registration/ui.js",

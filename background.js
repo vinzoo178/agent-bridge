@@ -2119,7 +2119,9 @@ const SUPPORTED_PLATFORMS = [
   'chatgpt.com',
   'chat.openai.com',
   'chat.deepseek.com',
-  'duckduckgo.com'
+  'duckduckgo.com',
+  'chat.z.ai',
+  'z.ai'
 ];
 
 // Check if URL is a supported chat platform
@@ -2142,6 +2144,7 @@ function detectPlatformFromUrl(url) {
     if (hostname.includes('chatgpt') || hostname.includes('openai')) return 'chatgpt';
     if (hostname.includes('deepseek')) return 'deepseek';
     if (hostname.includes('duckduckgo')) return 'duckduckgo';
+    if (hostname.includes('z.ai') || hostname.includes('chat.z.ai')) return 'zai';
     return null;
   } catch {
     return null;
@@ -2179,6 +2182,11 @@ function getRootUrlForPlatform(url) {
     }
     if (hostname.includes('duckduckgo.com')) {
       return 'https://duckduckgo.com/?q=DuckDuckGo+AI+Chat&ia=chat&duckai=1';
+    }
+    
+    // Z.ai: https://chat.z.ai/
+    if (hostname.includes('z.ai') || hostname.includes('chat.z.ai')) {
+      return 'https://chat.z.ai/';
     }
     
     return null;

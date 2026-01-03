@@ -84,6 +84,11 @@ if (typeof DuckDuckGoAdapter !== 'undefined') {
   PlatformRegistry.register(DuckDuckGoAdapter);
 }
 
+// Z.ai
+if (typeof ZAIAdapter !== 'undefined') {
+  PlatformRegistry.register(ZAIAdapter);
+}
+
 // ============================================
 // HOW TO ADD NEW PLATFORMS:
 // 1. Create new adapter file in platforms/ folder
