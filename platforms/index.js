@@ -99,6 +99,11 @@ if (typeof YouComAdapter !== 'undefined') {
   PlatformRegistry.register(YouComAdapter);
 }
 
+// Qwen
+if (typeof QwenAdapter !== 'undefined') {
+  PlatformRegistry.register(QwenAdapter);
+}
+
 // ============================================
 // HOW TO ADD NEW PLATFORMS:
 // 1. Create new adapter file in platforms/ folder

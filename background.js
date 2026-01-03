@@ -2123,7 +2123,8 @@ const SUPPORTED_PLATFORMS = [
   'chat.z.ai',
   'z.ai',
   'kimi.com',
-  'you.com'
+  'you.com',
+  'chat.qwen.ai'
 ];
 
 // Check if URL is a supported chat platform
@@ -2149,6 +2150,7 @@ function detectPlatformFromUrl(url) {
     if (hostname.includes('z.ai') || hostname.includes('chat.z.ai')) return 'zai';
     if (hostname.includes('kimi.com')) return 'kimi';
     if (hostname.includes('you.com')) return 'youcom';
+    if (hostname.includes('qwen.ai') || hostname.includes('chat.qwen.ai')) return 'qwen';
     return null;
   } catch {
     return null;
@@ -2201,6 +2203,11 @@ function getRootUrlForPlatform(url) {
     // You.com: https://you.com/?chatMode=default
     if (hostname.includes('you.com')) {
       return 'https://you.com/?chatMode=default';
+    }
+    
+    // Qwen: https://chat.qwen.ai/
+    if (hostname.includes('qwen.ai') || hostname.includes('chat.qwen.ai')) {
+      return 'https://chat.qwen.ai/';
     }
     
     return null;
