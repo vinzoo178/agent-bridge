@@ -1182,9 +1182,10 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
   const history = state.conversationHistory;
   const contextCount = state.config.contextMessages || 4;
 
-  // If this is early in conversation (< 3 messages), just send the response
+  // If this is early in conversation (< 3 messages), add length limit reminder
   if (history.length <= 2) {
-    return latestResponse;
+    // Add length limit instruction even for early messages
+    return latestResponse + '\n\n⚠️ **LƯU Ý:** Giữ câu trả lời NGẮN GỌN (2-4 câu, dưới 200 từ). KHÔNG viết dài dòng.';
   }
 
   // Get recent messages for context (excluding the latest one we just added)
@@ -1210,7 +1211,11 @@ function buildMessageWithContext(latestResponse, fromParticipantIndex) {
   contextStr += '💬 **TIN NHẮN MỚI NHẤT:**\n\n';
   contextStr += latestResponse;
   contextStr += '\n\n─'.repeat(40) + '\n';
-  contextStr += '👉 Hãy tiếp tục cuộc thảo luận dựa trên context ở trên. Trả lời NGẮN GỌN (2-4 câu).';
+  contextStr += '👉 **QUAN TRỌNG - QUY TẮC BẮT BUỘC:**\n';
+  contextStr += '⚠️ Trả lời NGẮN GỌN - CHỈ 2-4 CÂU (tối đa 200 TỪ)\n';
+  contextStr += '⚠️ KHÔNG viết dài dòng, KHÔNG liệt kê nhiều ý\n';
+  contextStr += '⚠️ Giữ câu trả lời SÚC TÍCH và ĐIỂM QUAN TRỌNG NHẤT\n';
+  contextStr += '👉 Hãy tiếp tục cuộc thảo luận dựa trên context ở trên với câu trả lời NGẮN GỌN (2-4 câu, dưới 200 từ).';
 
   bgLog('[Background] Built message with', recentMessages.length, 'context messages');
 

@@ -34,6 +34,7 @@ const elements = {
   initialPrompt: document.getElementById('initial-prompt'),
   startBtn: document.getElementById('start-btn'),
   stopBtn: document.getElementById('stop-btn'),
+  clearConversationBtn: document.getElementById('clear-conversation-btn'),
   conversationHistory: document.getElementById('conversation-history'),
   messageCount: document.getElementById('message-count'),
   clearHistory: document.getElementById('clear-history'),
@@ -270,6 +271,11 @@ function setupEventListeners() {
   // Start/Stop buttons
   elements.startBtn.addEventListener('click', startConversation);
   elements.stopBtn.addEventListener('click', stopConversation);
+
+  // Clear conversation (near stop button)
+  if (elements.clearConversationBtn) {
+    elements.clearConversationBtn.addEventListener('click', clearHistory);
+  }
 
   // Clear history
   elements.clearHistory.addEventListener('click', clearHistory);

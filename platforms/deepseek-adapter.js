@@ -31,6 +31,8 @@ class DeepSeekAdapter extends BasePlatformAdapter {
         'form button',
       ],
       responses: [
+        '.ds-markdown-paragraph',  // DeepSeek markdown paragraph elements
+        '[class*="ds-markdown"]',  // Any element with ds-markdown in class
         '.assistant-message',
         '[data-role="assistant"]',
         '.message-assistant',
@@ -71,7 +73,77 @@ class DeepSeekAdapter extends BasePlatformAdapter {
   }
   
   getResponses() {
+    // First try to find markdown paragraph elements (most specific for DeepSeek)
+    const markdownParas = document.querySelectorAll('.ds-markdown-paragraph');
+    if (markdownParas.length > 0) {
+      // Find unique parent containers for each message
+      // Messages are typically grouped in containers, we need to find those containers
+      const containers = new Map();
+      
+      markdownParas.forEach(para => {
+        // Try to find a container that groups paragraphs together
+        // Look for common parent elements that might contain multiple paragraphs
+        let container = para.closest('[class*="message"]') ||
+                       para.closest('[class*="chat-item"]') ||
+                       para.closest('[class*="response"]') ||
+                       para.closest('[class*="assistant"]') ||
+                       para.parentElement?.parentElement ||
+                       para.parentElement;
+        
+        // Use a key based on container's position/index to group paragraphs from same message
+        const key = container === document.body ? para.parentElement : container;
+        if (!containers.has(key)) {
+          containers.set(key, container);
+        }
+      });
+      
+      if (containers.size > 0) {
+        return Array.from(containers.values());
+      }
+      
+      // If we can't find containers, try to group paragraphs by their direct parent
+      const parentGroups = new Set();
+      markdownParas.forEach(para => {
+        parentGroups.add(para.parentElement);
+      });
+      return Array.from(parentGroups);
+    }
+    
+    // Fallback: try to find containers with ds-markdown class
+    const markdownContainers = document.querySelectorAll('[class*="ds-markdown"]:not(.ds-markdown-paragraph)');
+    if (markdownContainers.length > 0) {
+      return Array.from(markdownContainers);
+    }
+    
+    // Fallback to standard selectors
     return this.findAll(this.selectors.responses);
+  }
+  
+  getLatestResponse() {
+    // Override to handle ds-markdown-paragraph elements properly
+    const responses = this.getResponses();
+    if (responses.length === 0) return null;
+    
+    const last = responses[responses.length - 1];
+    
+    // If it's a container, look for markdown paragraphs inside
+    const markdownParas = last.querySelectorAll?.('.ds-markdown-paragraph') || [];
+    if (markdownParas.length > 0) {
+      const textParts = Array.from(markdownParas).map(p => 
+        (p.innerText || p.textContent || '').trim()
+      ).filter(t => t.length > 0);
+      if (textParts.length > 0) {
+        return textParts.join('\n\n').trim();
+      }
+    }
+    
+    // If the element itself is a paragraph, get its text
+    if (last.classList?.contains('ds-markdown-paragraph')) {
+      return (last.innerText || last.textContent || '').trim();
+    }
+    
+    // Standard extraction
+    return (last.innerText || last.textContent || '').trim();
   }
   
   isGenerating() {
