@@ -1587,9 +1587,12 @@ function getState() {
 
 // Get state with actual tabIds for content script to check registration
 function getStateWithTabIds() {
+  // Filter out empty participants (no tabId) for consistency with storage
+  const validParticipants = state.participants.filter(p => p && p.tabId && p.tabId !== null);
+  
   return {
     isActive: state.isActive,
-    participants: state.participants.filter(p => p != null).map(p => ({
+    participants: validParticipants.map(p => ({
       connected: !!p.tabId,
       tabId: p.tabId,
       platform: p.platform,
@@ -1943,7 +1946,7 @@ function broadcastBackendStatus(status) {
 }
 
 function broadcastStateUpdate() {
-  const stateUpdate = getState();
+  const stateUpdate = getStateWithTabIds();
 
   // Send to popup
   chrome.runtime.sendMessage({

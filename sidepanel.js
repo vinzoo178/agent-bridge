@@ -1999,7 +1999,7 @@ function renderAvailableAgents(agents) {
         // Add agent to the next position (no empty slots needed)
         const targetPosition = validParticipants.length + 1;
         spLog('[Side Panel] Assigning agent', tabId, 'to position', targetPosition);
-        assignAgentToSlot(tabId, targetPosition);
+        await assignAgentToSlot(tabId, targetPosition);
 
       } catch (error) {
         spError('[Side Panel] Failed to auto-assign agent:', error);
@@ -2019,6 +2019,29 @@ function renderAvailableAgents(agents) {
 
 // Lock to prevent double-submission
 let isAssigning = false;
+let currentAssigningTabId = null;
+
+// Enable/disable all agent items
+function setAgentItemsDisabled(disabled, assigningTabId = null) {
+  const listContainer = document.getElementById('available-agents-list');
+  if (!listContainer) return;
+  
+  const items = listContainer.querySelectorAll('.available-agent-item');
+  items.forEach(item => {
+    if (disabled) {
+      item.classList.add('disabled');
+      // If this is the specific item being assigned, add assigning class too
+      if (assigningTabId) {
+        const tabId = parseInt(item.dataset.tabId);
+        if (tabId === assigningTabId) {
+          item.classList.add('assigning');
+        }
+      }
+    } else {
+      item.classList.remove('disabled', 'assigning');
+    }
+  });
+}
 
 async function assignAgentToSlot(tabId, position) {
   if (isAssigning) return;
@@ -2031,6 +2054,10 @@ async function assignAgentToSlot(tabId, position) {
 
   try {
     isAssigning = true;
+    currentAssigningTabId = parseInt(tabId);
+    // Disable all agent items during assignment
+    setAgentItemsDisabled(true, currentAssigningTabId);
+    
     const response = await chrome.runtime.sendMessage({
       type: 'ASSIGN_AGENT_TO_SLOT',
       tabId: parseInt(tabId),
@@ -2039,10 +2066,9 @@ async function assignAgentToSlot(tabId, position) {
 
     if (response && response.success) {
       showToast(`✅ Agent assigned to position ${position}`, 'success');
-      // Reload state and agents
+      // Reload state (agents list is updated via AVAILABLE_AGENTS_UPDATE broadcast)
       setTimeout(() => {
         loadStateOnly();
-        loadAvailableAgents();
       }, 500);
     } else {
       showToast('❌ Failed to assign agent', 'error');
@@ -2056,6 +2082,9 @@ async function assignAgentToSlot(tabId, position) {
     updateAgentSelectors();
   } finally {
     isAssigning = false;
+    currentAssigningTabId = null;
+    // Re-enable agent items after assignment completes
+    setAgentItemsDisabled(false);
   }
 }
 
