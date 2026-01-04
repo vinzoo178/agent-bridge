@@ -48,6 +48,22 @@ const elements = {
 // Track selected template (default: debate)
 let selectedTemplate = 'debate';
 
+// Reset textarea to default height
+function resetTextarea(textarea) {
+  textarea.style.height = 'auto';
+  textarea.style.height = '44px'; // min-height
+}
+
+// Auto-resize textarea function
+function autoResizeTextarea(textarea) {
+  textarea.style.height = 'auto';
+  const scrollHeight = textarea.scrollHeight;
+  const minHeight = 44;
+  const maxHeight = 200;
+  const newHeight = Math.max(minHeight, Math.min(scrollHeight, maxHeight));
+  textarea.style.height = newHeight + 'px';
+}
+
 // Template generators - take topic as input
 const promptGenerators = {
   debate: (topic) => `Bạn đang tham gia một cuộc tranh luận với một AI khác.
@@ -123,6 +139,12 @@ document.addEventListener('DOMContentLoaded', () => {
   loadState();
   loadConfigOnce(); // Load config only once at start
   setupEventListeners();
+  
+  // Initialize textarea - reset to default state
+  if (elements.topicInput) {
+    elements.topicInput.value = '';
+    resetTextarea(elements.topicInput);
+  }
 
   // Poll for state updates (but not config)
   statePollingInterval = setInterval(loadStateOnly, 2000);
@@ -236,6 +258,9 @@ function setupEventListeners() {
 
   // Auto-generate prompt when topic changes (if template selected)
   elements.topicInput.addEventListener('input', () => {
+    // Auto-resize textarea
+    autoResizeTextarea(elements.topicInput);
+
     if (selectedTemplate && elements.topicInput.value.trim()) {
       const topic = elements.topicInput.value.trim();
       elements.initialPrompt.value = promptGenerators[selectedTemplate](topic);
@@ -732,7 +757,7 @@ async function startConversation() {
   elements.initialPrompt.value = initialPrompt;
 
   elements.startBtn.disabled = true;
-  elements.startBtn.innerHTML = '<svg class="btn-icon w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Starting...';
+  elements.startBtn.innerHTML = '<svg class="btn-icon animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>';
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -745,6 +770,7 @@ async function startConversation() {
       showToast('🚀 Conversation started!', 'success');
       // Clear input after starting
       elements.topicInput.value = '';
+      resetTextarea(elements.topicInput);
     } else {
       showToast('❌ ' + (response.error || 'Failed to start'), 'error');
     }
@@ -755,7 +781,7 @@ async function startConversation() {
 
   // Reset button
   setTimeout(() => {
-    elements.startBtn.innerHTML = '<svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Send';
+    elements.startBtn.innerHTML = '<svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>';
     loadState();
     updateSendButtonState();
   }, 500);

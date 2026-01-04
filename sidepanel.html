@@ -131,23 +131,22 @@
         </div>
         
         <div class="chat-input-container">
-          <div class="chat-input-wrapper flex items-center gap-2">
-            <input 
-              type="text" 
+          <div class="chat-input-wrapper">
+            <textarea 
               id="topic-input" 
-              class="chat-input flex-1"
+              class="chat-input"
               placeholder="Enter topic or message..."
               autocomplete="off"
-            >
-            <button class="btn btn-primary btn-send flex items-center gap-1.5" id="start-btn" disabled>
-              <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              Send
-            </button>
+              rows="1"
+            ></textarea>
           </div>
           <div class="chat-controls flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <label class="auto-scroll-toggle flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" id="auto-scroll" checked class="cursor-pointer">
+                <span class="text-[10px]">Auto-scroll</span>
+              </label>
+            </div>
             <div class="flex items-center gap-2">
               <button class="btn btn-danger btn-sm flex items-center gap-1.5" id="stop-btn" disabled>
                 <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -170,10 +169,13 @@
                 Clear
               </button>
             </div>
-            <label class="auto-scroll-toggle flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" id="auto-scroll" checked class="cursor-pointer">
-              <span class="text-[10px]">Auto-scroll</span>
-            </label>
+            <div class="flex items-center gap-2">
+              <button class="btn btn-primary btn-send" id="start-btn" disabled title="Send message">
+                <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
         
