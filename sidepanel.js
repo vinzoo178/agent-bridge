@@ -1078,6 +1078,7 @@ async function snapshotConversation() {
     const tabPage = conversationContainer.closest('.tab-page');
     const tabPageStyle = tabPage ? getComputedStyle(tabPage) : null;
     const bodyStyle = getComputedStyle(document.body);
+    const htmlStyle = getComputedStyle(document.documentElement);
     
     // Try to get background color, prefer parent containers
     let bgColor = containerStyle.backgroundColor;
@@ -1085,10 +1086,28 @@ async function snapshotConversation() {
       bgColor = tabPageStyle ? tabPageStyle.backgroundColor : bodyStyle.backgroundColor;
     }
     if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'transparent') {
+      bgColor = htmlStyle.backgroundColor;
+    }
+    // Fallback to theme-based solid colors (no transparency)
+    if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'transparent') {
       bgColor = document.body.classList.contains('dark-theme') ? '#000000' : '#F2F2F7';
     }
     
+    // Ensure we have a solid color (convert rgba with alpha to solid)
+    if (bgColor.includes('rgba')) {
+      const rgbaMatch = bgColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
+      if (rgbaMatch) {
+        const r = rgbaMatch[1];
+        const g = rgbaMatch[2];
+        const b = rgbaMatch[3];
+        bgColor = `rgb(${r}, ${g}, ${b})`;
+      }
+    }
+    
     spLog(`[Snapshot] Background color: ${bgColor}`);
+    
+    // Store theme info for use in onclone callback
+    const isDarkTheme = document.body.classList.contains('dark-theme');
     
     // Configure html2canvas options for full conversation capture
     const options = {
@@ -1154,6 +1173,7 @@ async function snapshotConversation() {
     clonedContainer.style.overflow = 'visible';
     clonedContainer.style.height = 'auto';
     clonedContainer.style.maxHeight = 'none';
+    clonedContainer.style.backgroundColor = bgColor; // Ensure container has background
     clonedContainer.scrollTop = 0;
     
     wrapper.appendChild(clonedContainer);
@@ -1198,22 +1218,44 @@ async function snapshotConversation() {
           clonedInnerContainer.style.overflow = 'visible';
           clonedInnerContainer.style.height = 'auto';
           clonedInnerContainer.style.maxHeight = 'none';
+          clonedInnerContainer.style.backgroundColor = bgColor; // Ensure container has background
           clonedInnerContainer.scrollTop = 0;
           
-          // Ensure all message items are visible
+          // Ensure all message items are visible and have proper backgrounds
           const clonedMessages = clonedInnerContainer.querySelectorAll('.message-item');
           clonedMessages.forEach(msg => {
             msg.style.display = 'block';
             msg.style.visibility = 'visible';
+            // Ensure message items maintain their background (don't override if already set)
+            const msgBg = getComputedStyle(msg).backgroundColor;
+            if (!msgBg || msgBg === 'rgba(0, 0, 0, 0)' || msgBg === 'transparent') {
+              // If message has no background, give it a subtle one based on theme
+              msg.style.backgroundColor = isDarkTheme 
+                ? 'rgba(255, 255, 255, 0.05)' 
+                : 'rgba(0, 0, 0, 0.02)';
+            }
           });
         }
-        // Ensure body has background
+        // Ensure html and body have background
+        const clonedHtml = clonedDoc.documentElement;
+        if (clonedHtml) {
+          clonedHtml.style.backgroundColor = bgColor;
+        }
         const clonedBody = clonedDoc.body;
         if (clonedBody) {
           clonedBody.style.backgroundColor = bgColor;
           clonedBody.style.display = 'flex';
           clonedBody.style.justifyContent = 'center';
           clonedBody.style.alignItems = 'flex-start';
+        }
+        // Ensure all parent containers have background
+        const clonedTabPage = clonedDoc.querySelector('.tab-page');
+        if (clonedTabPage) {
+          clonedTabPage.style.backgroundColor = bgColor;
+        }
+        const clonedContainer = clonedDoc.querySelector('.container');
+        if (clonedContainer) {
+          clonedContainer.style.backgroundColor = bgColor;
         }
       }
     };
