@@ -200,9 +200,17 @@
             isRegisteringToPool = true;
             safeLog('INFO', '[AI Bridge Registration] Registering to pool... Platform: ' + state.platform);
 
+            // Check availability before registering
+            let availability = null;
+            if (window.AIBridge && window.AIBridge.adapter && typeof window.AIBridge.adapter.checkAvailability === 'function') {
+                availability = window.AIBridge.adapter.checkAvailability();
+                safeLog('INFO', '[AI Bridge Registration] Availability check:', JSON.stringify(availability));
+            }
+
             const response = await chrome.runtime.sendMessage({
                 type: 'REGISTER_TO_POOL',
-                platform: state.platform
+                platform: state.platform,
+                availability: availability
             });
 
             if (response && response.success) {

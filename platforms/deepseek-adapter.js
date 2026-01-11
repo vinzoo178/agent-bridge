@@ -183,6 +183,69 @@ class DeepSeekAdapter extends BasePlatformAdapter {
     
     return true;
   }
+  
+  // Override availability check - DeepSeek requires login
+  checkAvailability() {
+    const baseCheck = super.checkAvailability();
+    
+    // If base check fails, return that
+    if (!baseCheck.available) {
+      return baseCheck;
+    }
+    
+    // Check for login indicators
+    // DeepSeek shows login prompts or redirects to login page
+    const loginIndicators = [
+      'button:contains("登录")',
+      'button:contains("Sign in")',
+      'button:contains("Log in")',
+      'a[href*="login"]',
+      'a[href*="signin"]',
+      '.login-button',
+      '.sign-in-button',
+      '[class*="login"]',
+      '[class*="signin"]'
+    ];
+    
+    // Check if we're on a login page
+    const isLoginPage = window.location.pathname.includes('/login') || 
+                        window.location.pathname.includes('/signin') ||
+                        document.querySelector('form[action*="login"]') !== null;
+    
+    if (isLoginPage) {
+      return {
+        available: false,
+        reason: 'Login required - please sign in to DeepSeek',
+        requiresLogin: true
+      };
+    }
+    
+    // Check if input field is present and functional (if not, might need login)
+    const input = this.getInputField();
+    if (input) {
+      // Try to check if input is actually usable
+      // Some platforms disable input until logged in
+      const inputParent = input.closest('form') || input.closest('[class*="chat"]') || input.parentElement;
+      if (inputParent) {
+        // Check for login prompts near the input
+        const loginText = inputParent.textContent || '';
+        if (loginText.includes('登录') || loginText.includes('Sign in') || loginText.includes('Log in')) {
+          return {
+            available: false,
+            reason: 'Login required - please sign in to DeepSeek',
+            requiresLogin: true
+          };
+        }
+      }
+    }
+    
+    // If we have input and send button, assume available
+    return {
+      available: true,
+      reason: null,
+      requiresLogin: false
+    };
+  }
 }
 
 // Register adapter

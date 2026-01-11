@@ -163,11 +163,17 @@
           sendResponse({ success: true });
           break;
 
-        case 'CONVERSATION_STOPPED':
-          stopPolling();
-          updateStatus('⏹️ Stopped');
-          sendResponse({ success: true });
-          break;
+      case 'CONVERSATION_STOPPED':
+        stopPolling();
+        updateStatus('⏹️ Stopped');
+        sendResponse({ success: true });
+        break;
+
+      case 'CHECK_AVAILABILITY':
+        // Check if agent is available (can receive input and submit)
+        const availability = checkAgentAvailability();
+        sendResponse(availability);
+        return true;
       }
 
       return false;
@@ -626,6 +632,68 @@
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
+
+  // ============================================
+  // AVAILABILITY CHECKING
+  // ============================================
+
+  function checkAgentAvailability() {
+    const adapter = window.AIBridge?.adapter;
+    
+    if (adapter && typeof adapter.checkAvailability === 'function') {
+      return adapter.checkAvailability();
+    }
+    
+    // Fallback: basic check
+    const inputField = adapter ? adapter.getInputField() : null;
+    const sendButton = adapter ? adapter.getSendButton() : null;
+    
+    if (!inputField) {
+      return {
+        available: false,
+        reason: 'Input field not found',
+        requiresLogin: false
+      };
+    }
+    
+    if (inputField.disabled || inputField.readOnly) {
+      return {
+        available: false,
+        reason: 'Input field is disabled',
+        requiresLogin: false
+      };
+    }
+    
+    if (sendButton && sendButton.disabled) {
+      return {
+        available: false,
+        reason: 'Send button is disabled',
+        requiresLogin: false
+      };
+    }
+    
+    return {
+      available: true,
+      reason: null,
+      requiresLogin: false
+    };
+  }
+
+  // Periodically check availability and report to background
+  setInterval(async () => {
+    if (window.AIBridge && window.AIBridge.state && window.AIBridge.state.isRegistered) {
+      try {
+        const availability = checkAgentAvailability();
+        await chrome.runtime.sendMessage({
+          type: 'UPDATE_AGENT_AVAILABILITY',
+          tabId: null, // Background will use sender.tab.id
+          availability: availability
+        });
+      } catch (e) {
+        // Silently fail - agent might not be registered yet
+      }
+    }
+  }, 10000); // Check every 10 seconds
 
   // Start
   waitForRegistration();

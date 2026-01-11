@@ -44,6 +44,57 @@ class BasePlatformAdapter {
     return false;
   }
   
+  // Check if agent is available (can receive input and submit)
+  // Returns: { available: boolean, reason: string, requiresLogin: boolean }
+  checkAvailability() {
+    const inputField = this.getInputField();
+    const sendButton = this.getSendButton();
+    
+    // Check if input field exists
+    if (!inputField) {
+      return {
+        available: false,
+        reason: 'Input field not found',
+        requiresLogin: false
+      };
+    }
+    
+    // Check if input is disabled or read-only
+    if (inputField.disabled || inputField.readOnly) {
+      return {
+        available: false,
+        reason: 'Input field is disabled',
+        requiresLogin: false
+      };
+    }
+    
+    // Check if send button exists and is enabled
+    if (!sendButton) {
+      // Some platforms use Enter key, so this might be OK
+      // But we'll still check if input is interactive
+      if (inputField.offsetParent === null) {
+        return {
+          available: false,
+          reason: 'Input field not visible',
+          requiresLogin: false
+        };
+      }
+    } else if (sendButton.disabled) {
+      return {
+        available: false,
+        reason: 'Send button is disabled',
+        requiresLogin: false
+      };
+    }
+    
+    // Default: available (platform-specific adapters can override)
+    return {
+      available: true,
+      reason: null,
+      requiresLogin: false
+    };
+  }
+  
   // Set text in input field
   async setInputText(text) {
     const input = this.getInputField();

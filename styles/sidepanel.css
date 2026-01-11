@@ -67,6 +67,7 @@ body.dark-theme,
   --danger: #FF3B30;
   --danger-bg: rgba(255, 59, 48, 0.2);
   --warning: #ff9500;
+  --warning-bg: rgba(255, 149, 0, 0.15);
   
   --border-color: rgba(255, 149, 0, 0.3);
   --border-subtle: rgba(255, 255, 255, 0.1);
@@ -871,6 +872,69 @@ body {
   border-color: var(--border-subtle);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   transform: none;
+}
+
+.available-agent-item.unavailable {
+  opacity: 0.7;
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.available-agent-item.unavailable:hover {
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.availability-warning {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--warning);
+  font-size: 12px;
+  cursor: help;
+}
+
+.agent-warning-text {
+  font-size: 10px;
+  color: var(--warning);
+  margin-top: 2px;
+  font-style: italic;
+}
+
+.participant-name-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.participant-warning {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--warning);
+  margin-top: 2px;
+}
+
+.participant-warning svg {
+  flex-shrink: 0;
+}
+
+.warning-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.participant-card.unavailable {
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.session-status.warning {
+  color: var(--warning);
 }
 
 .available-agent-item.assigning {

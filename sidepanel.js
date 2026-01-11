@@ -670,9 +670,15 @@ function renderParticipants(participants) {
     const connected = participant.connected && hasAgent;
     const platform = participant.platform || null;
     const position = participant.order || index + 1;
+    
+    // Check availability
+    const availability = participant.availability || { available: true, reason: null, requiresLogin: false };
+    const isAvailable = availability.available !== false;
+    const warningReason = availability.reason || null;
+    const requiresLogin = availability.requiresLogin || false;
 
     const card = document.createElement('div');
-    card.className = `participant-card ${connected ? 'connected' : ''}`;
+    card.className = `participant-card ${connected ? 'connected' : ''} ${!isAvailable ? 'unavailable' : ''}`;
     card.dataset.position = position;
     card.dataset.tabId = participant.tabId || '';
 
@@ -686,14 +692,24 @@ function renderParticipants(participants) {
             <span class="order-number">${position}</span>
           </div>
           ${connected && platform ? icon : ''}
-          <span class="${connected ? 'platform-name-text' : 'empty-slot-text'}">
-            ${connected && platform ? platformName : 'Waiting for agent...'}
-          </span>
+          <div class="participant-name-wrapper">
+            <span class="${connected ? 'platform-name-text' : 'empty-slot-text'}">
+              ${connected && platform ? platformName : 'Waiting for agent...'}
+            </span>
+            ${!isAvailable && warningReason ? `
+              <div class="participant-warning" title="${escapeHtml(warningReason)}">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <span class="warning-text">${escapeHtml(warningReason)}</span>
+              </div>
+            ` : ''}
+          </div>
         </div>
         
         <div class="participant-controls">
-          <span class="session-status ${connected ? 'connected' : 'disconnected'}">
-            ${connected ? 'Connected' : 'Empty'}
+          <span class="session-status ${connected ? (isAvailable ? 'connected' : 'warning') : 'disconnected'}">
+            ${connected ? (isAvailable ? 'Connected' : '⚠️ Unavailable') : 'Empty'}
           </span>
           <button class="btn-release compact" data-position="${position}" 
                   style="display:${connected ? 'flex' : 'none'};" 
@@ -1990,6 +2006,10 @@ function renderAvailableAgents(agents) {
     chatgpt: '🤖',
     deepseek: '🔍',
     duckduckgo: '🦆',
+    zai: '⚡',
+    kimi: '🌟',
+    youcom: '💬',
+    qwen: '🔮',
     unknown: '❓'
   };
 
@@ -1997,14 +2017,24 @@ function renderAvailableAgents(agents) {
     const icon = platformIconsMap[agent.platform] || platformIconsMap.unknown;
     const platformName = agent.platform ? agent.platform.charAt(0).toUpperCase() + agent.platform.slice(1) : 'Unknown';
     const title = agent.title || `${platformName} Chat`;
+    
+    // Check availability
+    const availability = agent.availability || { available: true, reason: null, requiresLogin: false };
+    const isAvailable = availability.available !== false;
+    const warningReason = availability.reason || null;
+    const requiresLogin = availability.requiresLogin || false;
 
     return `
-      <div class="available-agent-item" data-tab-id="${agent.tabId}">
+      <div class="available-agent-item ${isAvailable ? '' : 'unavailable'}" data-tab-id="${agent.tabId}">
         <div class="agent-info">
           <span class="agent-icon">${icon}</span>
           <div class="agent-details">
-            <div class="agent-title">${escapeHtml(title)}</div>
+            <div class="agent-title">
+              ${escapeHtml(title)}
+              ${!isAvailable ? '<span class="availability-warning" title="' + escapeHtml(warningReason || 'Not available') + '">⚠️</span>' : ''}
+            </div>
             <div class="agent-platform">${platformName}</div>
+            ${!isAvailable && warningReason ? `<div class="agent-warning-text">${escapeHtml(warningReason)}</div>` : ''}
           </div>
         </div>
         <div class="agent-actions">

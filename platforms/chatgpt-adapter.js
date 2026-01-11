@@ -85,6 +85,29 @@ class ChatGPTAdapter extends BasePlatformAdapter {
     return responses;
   }
   
+  // Override availability check - ChatGPT doesn't require login but check if input is available
+  checkAvailability() {
+    const baseCheck = super.checkAvailability();
+    
+    // ChatGPT can work without login, so if base check passes, we're good
+    // But check if there's a blocking modal or error
+    if (baseCheck.available) {
+      // Check for blocking modals or errors
+      const blockingElements = document.querySelectorAll('[role="dialog"], .modal, [class*="error"]');
+      for (const el of blockingElements) {
+        if (el.offsetParent !== null && el.textContent.includes('error')) {
+          return {
+            available: false,
+            reason: 'Page error detected',
+            requiresLogin: false
+          };
+        }
+      }
+    }
+    
+    return baseCheck;
+  }
+  
   isGenerating() {
     // Check stop button
     const stopBtn = this.findFirst(this.selectors.stopButton);

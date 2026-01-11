@@ -607,7 +607,21 @@ async function handleMessage(message, sender) {
         bgError('REGISTER_TO_POOL: No sender or tab ID', JSON.stringify({ sender: sender ? 'exists' : 'null', tab: sender?.tab ? 'exists' : 'null' }));
         return { success: false, error: 'No tab ID' };
       }
-      return registerToPool(sender.tab.id, message.platform);
+      return registerToPool(sender.tab.id, message.platform, message.availability);
+
+    case 'CHECK_AGENT_AVAILABILITY':
+      // Check if an agent is available (can receive input and submit)
+      if (!sender || !sender.tab || !sender.tab.id) {
+        return { success: false, error: 'No tab ID' };
+      }
+      return await checkAgentAvailability(sender.tab.id);
+
+    case 'UPDATE_AGENT_AVAILABILITY':
+      // Update availability status for an agent
+      if (!message.tabId) {
+        return { success: false, error: 'No tab ID provided' };
+      }
+      return await updateAgentAvailability(message.tabId, message.availability);
 
     case 'GET_AVAILABLE_AGENTS':
       return getAvailableAgents();
@@ -992,7 +1006,7 @@ async function saveParticipantsToStorage() {
 }
 
 // Register tab to available agents pool (new proactive registration)
-async function registerToPool(tabId, platform) {
+async function registerToPool(tabId, platform, availability = null) {
   bgLog('====== REGISTER TO POOL ======');
   bgLog('TabId:', tabId, 'Platform:', platform);
 
@@ -1007,6 +1021,23 @@ async function registerToPool(tabId, platform) {
     bgLog('Could not get tab info:', e.message);
   }
 
+  // If availability not provided, check it
+  if (!availability) {
+    try {
+      const availabilityResponse = await chrome.tabs.sendMessage(tabId, {
+        type: 'CHECK_AVAILABILITY'
+      });
+      if (availabilityResponse && availabilityResponse.available !== undefined) {
+        availability = availabilityResponse;
+        bgLog('Availability checked:', JSON.stringify(availability));
+      }
+    } catch (e) {
+      bgLog('Could not check availability:', e.message);
+      // Default to unknown availability
+      availability = { available: true, reason: null, requiresLogin: false };
+    }
+  }
+
   // Check if already in pool
   const existingIndex = state.availableAgents.findIndex(agent => agent.tabId === tabId);
   if (existingIndex >= 0) {
@@ -1015,13 +1046,15 @@ async function registerToPool(tabId, platform) {
     state.availableAgents[existingIndex].platform = platform;
     state.availableAgents[existingIndex].title = title;
     state.availableAgents[existingIndex].registeredAt = new Date().toISOString();
+    state.availableAgents[existingIndex].availability = availability || { available: true, reason: null, requiresLogin: false };
   } else {
     // Add to pool
     state.availableAgents.push({
       tabId: tabId,
       platform: platform,
       title: title,
-      registeredAt: new Date().toISOString()
+      registeredAt: new Date().toISOString(),
+      availability: availability || { available: true, reason: null, requiresLogin: false }
     });
     bgLog('Added to pool. Total agents:', state.availableAgents.length);
   }
@@ -1068,6 +1101,57 @@ async function registerToPool(tabId, platform) {
   broadcastAvailableAgentsUpdate();
 
   return { success: true, agent: state.availableAgents.find(a => a.tabId === tabId) };
+}
+
+// Check agent availability by querying the content script
+async function checkAgentAvailability(tabId) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: 'CHECK_AVAILABILITY'
+    });
+    
+    if (response && response.available !== undefined) {
+      // Update availability in pool if agent is registered
+      const agentIndex = state.availableAgents.findIndex(a => a.tabId === tabId);
+      if (agentIndex >= 0) {
+        state.availableAgents[agentIndex].availability = response;
+        await chrome.storage.local.set({ availableAgents: state.availableAgents });
+        broadcastAvailableAgentsUpdate();
+      }
+      
+      return { success: true, availability: response };
+    }
+    
+    return { success: false, error: 'Invalid response from content script' };
+  } catch (e) {
+    bgError('Failed to check agent availability:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+// Update agent availability status
+async function updateAgentAvailability(tabId, availability) {
+  const agentIndex = state.availableAgents.findIndex(a => a.tabId === tabId);
+  if (agentIndex >= 0) {
+    state.availableAgents[agentIndex].availability = availability;
+    await chrome.storage.local.set({ availableAgents: state.availableAgents });
+    broadcastAvailableAgentsUpdate();
+    return { success: true };
+  }
+  
+  // Also check participants
+  const participantIndex = state.participants.findIndex(p => p && p.tabId === tabId);
+  if (participantIndex >= 0) {
+    if (!state.participants[participantIndex].availability) {
+      state.participants[participantIndex].availability = {};
+    }
+    state.participants[participantIndex].availability = availability;
+    await saveParticipantsToStorage();
+    broadcastStateUpdate();
+    return { success: true };
+  }
+  
+  return { success: false, error: 'Agent not found' };
 }
 
 // Get list of available agents
