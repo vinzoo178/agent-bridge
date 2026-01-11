@@ -7,6 +7,7 @@ const TEMPLATE_WORD_LIMITS = {
   story: 100,
   qa: 100, // Default for Q&A (answers), questions are typically shorter
   brainstorm: 100,
+  action: 500, // Higher limit for code generation templates
   default: 200 // Fallback for unknown templates or when no template is specified
 };
 
@@ -1537,6 +1538,143 @@ async function recordTimeoutPerformance(platformName, timeoutUsed, responseTime,
   }
 }
 
+// Code execution helpers for "action" template
+function extractCodeFromResponse(responseText) {
+  if (!responseText) {
+    bgLog('[Code Extractor] No response text provided');
+    return null;
+  }
+
+  bgLog('[Code Extractor] Searching for code in response (length:', responseText.length, ')');
+
+  // Try to find code blocks with various formats
+  // Match: ```javascript ... ```, ```js ... ```, or just ``` ... ```
+  const codeBlockRegex = /```(?:javascript|js)?\s*\n?([\s\S]*?)```/g;
+  const matches = [];
+  let match;
+
+  while ((match = codeBlockRegex.exec(responseText)) !== null) {
+    const code = match[1].trim();
+    if (code.length > 0) {
+      matches.push(code);
+      bgLog('[Code Extractor] Found code block, length:', code.length);
+    }
+  }
+
+  // If code blocks found, use the first one
+  if (matches.length > 0) {
+    bgLog('[Code Extractor] Returning code from code block');
+    return matches[0];
+  }
+
+  // Fallback 1: Try to find code between single backticks (inline code)
+  bgLog('[Code Extractor] No code blocks found, trying inline code...');
+  const inlineCodeRegex = /`([^`\n]+)`/g;
+  const inlineMatches = [];
+  while ((match = inlineCodeRegex.exec(responseText)) !== null) {
+    const code = match[1].trim();
+    // Only consider if it looks like executable code (has chrome API calls)
+    if (code.includes('chrome.') && (code.includes('(') || code.includes('create') || code.includes('query'))) {
+      inlineMatches.push(code);
+      bgLog('[Code Extractor] Found inline code:', code.substring(0, 50));
+    }
+  }
+  if (inlineMatches.length > 0) {
+    bgLog('[Code Extractor] Returning inline code');
+    return inlineMatches[0];
+  }
+
+  // Fallback 2: Try to find lines that look like chrome API calls
+  bgLog('[Code Extractor] No inline code found, trying to find chrome API calls in text...');
+  const lines = responseText.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Look for lines that contain chrome. and look like function calls
+    if (trimmed.includes('chrome.') && (trimmed.includes('create') || trimmed.includes('query') || trimmed.includes('update')) && trimmed.includes('(')) {
+      bgLog('[Code Extractor] Found chrome API call in text:', trimmed.substring(0, 100));
+      return trimmed;
+    }
+  }
+
+  bgWarn('[Code Extractor] No executable code found in response');
+  bgLog('[Code Extractor] Response preview:', responseText.substring(0, 500));
+  return null;
+}
+
+async function executeActionCode(code) {
+  if (!code) {
+    throw new Error('No code provided');
+  }
+
+  try {
+    bgLog('[Code Executor] Executing code:', code.substring(0, 300));
+    
+    // Chrome extension service workers have CSP that prevents eval() and new Function()
+    // We need to parse and execute chrome API calls manually
+    // For now, support common patterns like chrome.tabs.create, chrome.tabs.query, etc.
+    
+    // Remove comments line by line to avoid regex issues
+    const lines = code.split('\n');
+    const cleanLines = lines
+      .filter(line => !line.trim().startsWith('//'))
+      .map(line => line.trim())
+      .filter(line => line);
+    const cleanCode = cleanLines.join(' ');
+    bgLog('[Code Executor] Clean code:', cleanCode.substring(0, 200));
+    
+    // Parse chrome.tabs.create({ url: '...' })
+    // Use a flexible regex that allows any characters between { and url, and between url value and }
+    const tabsCreateRegex = /chrome\.tabs\.create\s*\(\s*\{[^}]*url\s*:\s*['"`]([^'"`]+)['"`][^}]*\}\s*\)/;
+    const tabsCreateMatch = cleanCode.match(tabsCreateRegex);
+    if (tabsCreateMatch) {
+      const url = tabsCreateMatch[1];
+      bgLog('[Code Executor] Detected chrome.tabs.create with URL:', url);
+      await chrome.tabs.create({ url: url });
+      bgLog('[Code Executor] Tab created successfully');
+      return { success: true };
+    } else {
+      bgWarn('[Code Executor] chrome.tabs.create pattern not matched');
+      bgLog('[Code Executor] Full clean code:', cleanCode);
+    }
+    
+    // Parse chrome.tabs.query(...) - simple case
+    const tabsQueryMatch = cleanCode.match(/chrome\.tabs\.query\s*\(/);
+    if (tabsQueryMatch) {
+      bgWarn('[Code Executor] chrome.tabs.query detected but not fully supported yet');
+      // Could implement query parsing if needed
+      return { success: false, error: 'chrome.tabs.query is not yet supported' };
+    }
+    
+    // Parse chrome.tabs.update(...)
+    const tabsUpdateMatch = cleanCode.match(/chrome\.tabs\.update\s*\(\s*(\d+|\w+)\s*,\s*\{[^}]*url\s*:\s*['"`]([^'"`]+)['"`][^}]*\}\s*\)/);
+    if (tabsUpdateMatch) {
+      const tabId = tabsUpdateMatch[1];
+      const url = tabsUpdateMatch[2];
+      bgLog('[Code Executor] Detected chrome.tabs.update with tabId:', tabId, 'URL:', url);
+      const actualTabId = isNaN(tabId) ? null : parseInt(tabId);
+      if (actualTabId) {
+        await chrome.tabs.update(actualTabId, { url: url });
+      } else {
+        // If tabId is a variable name, we can't resolve it - use current active tab
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs[0]) {
+          await chrome.tabs.update(tabs[0].id, { url: url });
+        }
+      }
+      bgLog('[Code Executor] Tab updated successfully');
+      return { success: true };
+    }
+    
+    // If no known pattern matched, return error
+    bgError('[Code Executor] No supported chrome API pattern found in code');
+    return { success: false, error: 'Code contains unsupported API calls. Currently supported: chrome.tabs.create({ url: "..." })' };
+  } catch (error) {
+    bgError('[Code Executor] Execution error:', error);
+    bgError('[Code Executor] Error stack:', error.stack);
+    return { success: false, error: error.message };
+  }
+}
+
 async function handleAIResponse(response, sessionNum, requestId) {
   bgLog('handleAIResponse from session:', sessionNum, 'requestId:', requestId);
   bgLog('Response length:', response.length);
@@ -1595,6 +1733,59 @@ async function handleAIResponse(response, sessionNum, requestId) {
 
   // Use response as-is, let the prompt control response length
   const finalResponse = response.trim();
+
+  // Check if this is an "action" template - execute code and stop
+  if (state.config.templateType === 'action') {
+    bgLog('[Background] Action template detected, attempting to execute code...');
+    
+    const code = extractCodeFromResponse(finalResponse);
+    let executionResult = null;
+    let executionStatus = '';
+    
+    if (code) {
+      bgLog('[Background] Code extracted, executing...');
+      bgLog('[Background] Extracted code:', code.substring(0, 200));
+      try {
+        executionResult = await executeActionCode(code);
+        executionStatus = executionResult.success 
+          ? '\n\n✅ Code executed successfully' 
+          : `\n\n❌ Code execution failed: ${executionResult.error || 'Unknown error'}`;
+      } catch (error) {
+        bgError('[Background] Code execution error:', error);
+        executionStatus = `\n\n❌ Code execution error: ${error.message}`;
+        executionResult = { success: false, error: error.message };
+      }
+    } else {
+      bgWarn('[Background] Action template but no code found in response');
+      executionStatus = '\n\n⚠️ No executable code found in response';
+    }
+    
+    // Add to conversation history with execution result (always stop for action templates)
+    const historyEntry = {
+      id: Date.now(),
+      sessionNum: participantIndex + 1,
+      participantIndex: participantIndex,
+      order: participant.order,
+      role: participant.role,
+      content: finalResponse + executionStatus,
+      timestamp: new Date().toISOString(),
+      platform: participant.platform,
+      title: participant.title
+    };
+
+    state.conversationHistory.push(historyEntry);
+    await chrome.storage.local.set({
+      conversationHistory: state.conversationHistory
+    });
+
+    broadcastConversationUpdate(historyEntry);
+    broadcastStateUpdate();
+
+    // Stop conversation after processing action (action templates are single-shot)
+    bgLog('[Background] Action template processed, stopping conversation');
+    await stopConversation();
+    return { success: true, codeExecuted: !!code, executionResult };
+  }
 
   // Add to conversation history
   const historyEntry = {
@@ -1745,8 +1936,14 @@ async function startConversation(initialPrompt, templateType = null) {
   // Count participants with tabId (actual agents assigned)
   const validParticipants = state.participants.filter(p => p && p.tabId);
 
-  if (validParticipants.length < 2) {
-    return { success: false, error: 'At least 2 participants with agents must be assigned' };
+  // Action template only needs 1 participant (single-shot code execution)
+  const minParticipants = (templateType === 'action') ? 1 : 2;
+  
+  if (validParticipants.length < minParticipants) {
+    const errorMsg = templateType === 'action' 
+      ? 'At least 1 participant with an agent must be assigned for code execution'
+      : 'At least 2 participants with agents must be assigned';
+    return { success: false, error: errorMsg };
   }
 
   // Find first participant with tabId

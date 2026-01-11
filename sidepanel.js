@@ -121,7 +121,29 @@ Bắt đầu với MỘT câu hỏi đầu tiên!`,
 3. Có thể bổ sung hoặc kết hợp ý tưởng trước
 4. KHÔNG liệt kê nhiều ý tưởng
 
-Bắt đầu với 1 ý tưởng đầu tiên!`
+Bắt đầu với 1 ý tưởng đầu tiên!`,
+
+  action: (topic) => `Generate executable JavaScript code to perform the following action: "${topic}"
+
+⚠️ IMPORTANT - CODE GENERATION REQUIREMENTS:
+1. Generate ONLY JavaScript code, wrapped in \`\`\`javascript code blocks
+2. The code should use Chrome Extension APIs available in the background context:
+   - chrome.tabs.create({ url: '...' }) to open new tabs
+   - chrome.tabs.query() to find tabs
+   - chrome.tabs.update() to update tabs
+3. LIMITATIONS: This system can only execute simple browser actions like opening URLs. Complex multi-step actions (like placing orders, filling forms, clicking buttons) are NOT supported.
+4. If the action has multiple steps, generate code ONLY for the first simple step (typically opening a search URL)
+5. Use simple, direct code - avoid complex logic or multi-step operations
+6. If the action involves web search, use Google search URLs like: https://www.google.com/search?q=QUERY
+7. Return ONLY the code, no explanations or markdown outside the code blocks
+
+Example format:
+\`\`\`javascript
+// Code to perform: ${topic}
+chrome.tabs.create({ url: 'https://www.google.com/search?q=QUERY' });
+\`\`\`
+
+Now generate the code for: "${topic}"`
 };
 
 // Platform icons (SVG paths)
@@ -629,9 +651,10 @@ function updateUI(state) {
   // Render participants dynamically
   renderParticipants(state.participants || []);
 
-  // Update button states - need at least 2 participants
+  // Update button states - need at least 2 participants (1 for action template)
   const participants = state.participants || [];
-  const allConnected = participants.length >= 2 && participants.every(p => p.connected);
+  const minParticipants = (selectedTemplate === 'action') ? 1 : 2;
+  const allConnected = participants.length >= minParticipants && participants.every(p => p.connected);
   const canStart = allConnected && !isActive;
   const canStop = isActive;
 
