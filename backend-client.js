@@ -252,7 +252,17 @@
       }
 
       const sessionNum = sessionResponse.sessionNum;
-      bLog('[Backend Client] Using session:', sessionNum, 'tabId:', sessionResponse.tabId, 'platform:', sessionResponse.platform);
+      const platform = sessionResponse.platform;
+      bLog('[Backend Client] Using session:', sessionNum, 'tabId:', sessionResponse.tabId, 'platform:', platform);
+
+      // Store platform info for this request (for timeout calculation)
+      if (requestId && platform) {
+        // Store in a temporary map to use when sending response
+        if (!window.backendRequestPlatforms) {
+          window.backendRequestPlatforms = new Map();
+        }
+        window.backendRequestPlatforms.set(requestId, platform);
+      }
 
       // Send message via background script (which will forward to content script)
       const sendResult = await chrome.runtime.sendMessage({
@@ -306,11 +316,12 @@
     });
   }
 
-  function sendResponseToBackend(requestId, response) {
+  function sendResponseToBackend(requestId, response, platform = null) {
     sendToBackend({
       type: 'AI_RESPONSE',
       requestId: requestId,
-      response: response
+      response: response,
+      platform: platform // Include platform for logging/debugging
     });
   }
 
@@ -328,8 +339,16 @@
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'AI_RESPONSE_FOR_BACKEND') {
       // Background received AI response and wants to send to backend
-      const { requestId, response } = message;
-      sendResponseToBackend(requestId, response);
+      const { requestId, response, platform } = message;
+      
+      // Include platform info in response for backend timeout tracking
+      sendResponseToBackend(requestId, response, platform);
+      
+      // Clean up stored platform info
+      if (window.backendRequestPlatforms && requestId) {
+        window.backendRequestPlatforms.delete(requestId);
+      }
+      
       sendResponse({ success: true });
       return true;
     }

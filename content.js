@@ -69,6 +69,25 @@
   let currentRequestId = null; // Store requestId from backend
   const MAX_POLLS = 90;
   const STABLE_THRESHOLD = 2;
+  
+  // Platform-specific timeout settings
+  function getMaxPolls() {
+    const adapter = window.AIBridge?.adapter;
+    const platform = window.AIBridge?.platform || 'unknown';
+    
+    // z.ai with deepthink mode needs more time
+    if (platform === 'zai' || (adapter && adapter.name === 'zai')) {
+      // Check if in deepthink mode
+      if (adapter && typeof adapter.isDeepthinkMode === 'function' && adapter.isDeepthinkMode()) {
+        log('Z.ai DeepThink mode detected - using extended timeout');
+        return 300; // 300 polls * 2s = 10 minutes for deepthink
+      }
+      // Even without deepthink, z.ai can be slow
+      return 150; // 150 polls * 2s = 5 minutes
+    }
+    
+    return MAX_POLLS; // Default: 90 polls * 2s = 3 minutes
+  }
 
   async function initMessageHandling() {
     log('Initializing message handling');
@@ -492,8 +511,9 @@
         log('Response changed, resetting stability counter');
       }
 
-      if (pollCount >= MAX_POLLS) {
-        log('⚠️ Timeout reached');
+      const maxPolls = getMaxPolls();
+      if (pollCount >= maxPolls) {
+        log('⚠️ Timeout reached (max polls:', maxPolls, ')');
         stopPolling();
         updateStatus('⚠️ Timeout');
       }

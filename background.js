@@ -54,6 +54,7 @@ const debugLogs = [];
 const MAX_LOGS = 1000; // Max logs in memory and session storage
 const MAX_LOCAL_LOGS = 50; // Only keep last 50 logs in local storage (as recommended)
 const MAX_RECENT_LOGS = 50; // Keep last N logs regardless of level in local storage
+const CLEANUP_THRESHOLD = 0.9; // Clean logs when reaching 90% of MAX_LOGS (proactive cleanup)
 let logSaveTimer = null;
 
 // Track if logs have been loaded in this session
@@ -105,9 +106,9 @@ async function loadLogsFromStorage(addStartupLog = false) {
         debugLogs.push(...newLogs);
         // Sort by timestamp
         debugLogs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-        // Trim if too many
+        // Trim if too many using cleanup function
         if (debugLogs.length > MAX_LOGS) {
-          debugLogs.splice(0, debugLogs.length - MAX_LOGS);
+          cleanupLogs('load-merge', MAX_LOGS);
         }
         bgLog(`[Background] Merged ${newLogs.length} logs from storage, total: ${debugLogs.length}`);
       } else if (!logsLoaded) {
@@ -195,6 +196,43 @@ async function loadLogsFromStorage(addStartupLog = false) {
   }
 }
 
+// Automatic log cleanup function - cleans logs proactively and on errors
+// This function handles both memory limits and storage quota issues
+function cleanupLogs(reason = 'auto', targetSize = null) {
+  const beforeCount = debugLogs.length;
+  const cleanupThreshold = targetSize || Math.floor(MAX_LOGS * CLEANUP_THRESHOLD);
+  
+  if (debugLogs.length > cleanupThreshold) {
+    // Keep the most recent logs (prioritize ERROR/WARN if needed)
+    const logsToKeep = Math.max(cleanupThreshold, Math.floor(MAX_LOGS * 0.8));
+    const removedCount = debugLogs.length - logsToKeep;
+    
+    // Keep ERROR/WARN logs and recent logs
+    const errorWarnLogs = debugLogs.filter(log => log.level === 'ERROR' || log.level === 'WARN');
+    const recentLogs = debugLogs.slice(-logsToKeep);
+    
+    // Combine: prefer ERROR/WARN, then recent logs
+    const combined = [...errorWarnLogs, ...recentLogs];
+    const uniqueLogs = Array.from(
+      new Map(combined.map(log => [log.timestamp, log])).values()
+    );
+    
+    // Sort by timestamp and keep the target size
+    debugLogs.length = 0;
+    debugLogs.push(...uniqueLogs
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      .slice(-logsToKeep)
+    );
+    
+    const afterCount = debugLogs.length;
+    if (beforeCount !== afterCount) {
+      console.log(`[Background] Cleaned ${removedCount} logs (${beforeCount} → ${afterCount}) - reason: ${reason}`);
+    }
+  }
+  
+  return { beforeCount, afterCount: debugLogs.length, removed: beforeCount - debugLogs.length };
+}
+
 // Save ERROR log immediately to local storage (for critical errors)
 // This ensures ERROR logs are persisted even if service worker terminates before debounced save
 async function saveErrorLogImmediately(errorEntry) {
@@ -228,9 +266,18 @@ async function saveErrorLogImmediately(errorEntry) {
     await chrome.storage.local.set({ debugLogs: logsForLocal });
     // Don't log this save operation to avoid infinite loop (this is called from addLog)
   } catch (e) {
-    // Silently fail - the debounced save will retry anyway
-    // Only log if it's not a quota error (to avoid spam)
-    if (!e.message || !e.message.includes('QUOTA_BYTES')) {
+    // Handle quota errors with automatic cleanup
+    if (e.message && e.message.includes('QUOTA_BYTES')) {
+      // Storage is full - try to clean up and save only ERROR logs
+      try {
+        const errorLogs = [errorEntry]; // At least save the current error
+        await chrome.storage.local.set({ debugLogs: errorLogs });
+        console.warn('[Background] Storage quota exceeded, saved only current ERROR log');
+      } catch (e2) {
+        console.error('[Background] Failed to save even minimal error log:', e2);
+      }
+    } else {
+      // Only log if it's not a quota error (to avoid spam)
       console.error('[Background] Failed to save ERROR log immediately:', e);
     }
   }
@@ -244,7 +291,10 @@ async function saveLogsToStorage() {
   }
   logSaveTimer = setTimeout(async () => {
     try {
-      // Trim logs before saving
+      // Proactive cleanup before saving (clean at 90% threshold)
+      cleanupLogs('pre-save');
+      
+      // Trim logs before saving (ensure we don't exceed MAX_LOGS)
       const logsToSave = debugLogs.slice(-MAX_LOGS);
 
       // Step 1: Save to session storage (primary backup - fast, no quota, auto-cleanup)
@@ -254,6 +304,8 @@ async function saveLogsToStorage() {
         bgLog(`[Background] ✓ Saved ${logsToSave.length} logs to session storage`);
       } catch (e) {
         bgWarn('[Background] Session storage not available:', e);
+        // If session storage fails, clean logs more aggressively
+        cleanupLogs('session-storage-error', Math.floor(MAX_LOGS * 0.7));
       }
 
       // Step 2: Save to local storage (important logs only - persist across reload)
@@ -278,22 +330,35 @@ async function saveLogsToStorage() {
         bgLog(`[Background] ✓ Saved ${logsForLocal.length} important logs to local storage (${importantLogs.length} ERROR/WARN + ${recentLogs.length} recent)`);
       } catch (e) {
         bgError('[Background] Failed to save to local storage:', e);
-        // If storage is full, try to keep only ERROR logs
+        // If storage is full, automatically clean up and retry
         if (e.message && e.message.includes('QUOTA_BYTES')) {
-          bgWarn('[Background] Local storage quota exceeded, keeping only ERROR logs');
+          bgWarn('[Background] Local storage quota exceeded, cleaning logs and retrying');
+          // Clean logs more aggressively (keep only 70% of MAX_LOCAL_LOGS)
+          const aggressiveCleanupSize = Math.floor(MAX_LOCAL_LOGS * 0.7);
           const errorLogs = logsToSave
             .filter(log => log.level === 'ERROR')
-            .slice(-MAX_RECENT_LOGS);
+            .slice(-aggressiveCleanupSize);
           try {
             await chrome.storage.local.set({ debugLogs: errorLogs });
-            bgLog(`[Background] Kept ${errorLogs.length} ERROR logs only`);
+            bgLog(`[Background] Auto-cleaned logs, kept ${errorLogs.length} ERROR logs only`);
+            // Also clean memory logs to prevent future issues
+            cleanupLogs('quota-error', Math.floor(MAX_LOGS * 0.8));
           } catch (e2) {
-            bgError('[Background] Failed to save error logs:', e2);
+            bgError('[Background] Failed to save error logs after cleanup:', e2);
+            // Last resort: clear all logs from storage if we can't save anything
+            try {
+              await chrome.storage.local.set({ debugLogs: errorLogs.slice(-10) }); // Keep only last 10 errors
+              cleanupLogs('quota-error-severe', Math.floor(MAX_LOGS * 0.5));
+            } catch (e3) {
+              bgError('[Background] Critical: Could not save any logs to storage:', e3);
+            }
           }
         }
       }
     } catch (e) {
       bgError('[Background] Failed to save logs:', e);
+      // On any error, clean logs proactively to prevent future issues
+      cleanupLogs('save-error', Math.floor(MAX_LOGS * 0.8));
     }
   }, 300); // 300ms debounce for faster saves while avoiding excessive writes
 }
@@ -357,9 +422,15 @@ function addLog(source, level, message) {
   // Add to memory (primary storage - always available)
   debugLogs.push(entry);
 
-  // Trim if too many (keep last MAX_LOGS)
+  // Proactive cleanup: clean logs when reaching 90% of MAX_LOGS
+  // This prevents hitting the hard limit and improves performance
+  if (debugLogs.length >= Math.floor(MAX_LOGS * CLEANUP_THRESHOLD)) {
+    cleanupLogs('auto-threshold');
+  }
+  
+  // Hard limit: ensure we never exceed MAX_LOGS (safety net)
   if (debugLogs.length > MAX_LOGS) {
-    debugLogs.splice(0, debugLogs.length - MAX_LOGS);
+    cleanupLogs('max-limit', MAX_LOGS);
   }
 
   // Save to storage
@@ -837,8 +908,15 @@ async function handleMessage(message, sender) {
 
         // Add new log entry to memory
         debugLogs.push(message.entry);
+        
+        // Proactive cleanup: clean logs when reaching 90% of MAX_LOGS
+        if (debugLogs.length >= Math.floor(MAX_LOGS * CLEANUP_THRESHOLD)) {
+          cleanupLogs('auto-threshold');
+        }
+        
+        // Hard limit: ensure we never exceed MAX_LOGS (safety net)
         if (debugLogs.length > MAX_LOGS) {
-          debugLogs.splice(0, debugLogs.length - MAX_LOGS);
+          cleanupLogs('max-limit', MAX_LOGS);
         }
 
         // Save to storage (debounced)
@@ -1362,13 +1440,21 @@ async function handleAIResponse(response, sessionNum, requestId) {
   // If this is a backend request, forward to backend client
   if (requestId) {
     bgLog('Backend request detected, forwarding to backend client');
-    pendingBackendRequests.set(requestId, { sessionNum, timestamp: Date.now() });
+    
+    // Get platform info for this session
+    const participantIndex = state.participants.findIndex(p =>
+      p && ((p.order === sessionNum) || (state.participants.indexOf(p) + 1 === sessionNum))
+    );
+    const platform = participantIndex >= 0 ? state.participants[participantIndex]?.platform : null;
+    
+    pendingBackendRequests.set(requestId, { sessionNum, timestamp: Date.now(), platform });
 
     // Forward to backend client (will be handled by backend-client.js)
     chrome.runtime.sendMessage({
       type: 'AI_RESPONSE_FOR_BACKEND',
       requestId: requestId,
-      response: response.trim()
+      response: response.trim(),
+      platform: platform
     }).catch(err => {
       bgError('Failed to forward to backend client:', err);
     });

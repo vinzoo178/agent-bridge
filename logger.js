@@ -5,6 +5,7 @@
   'use strict';
 
   const MAX_LOGS = 500; // Keep last 500 logs
+  const CLEANUP_THRESHOLD = 0.9; // Clean logs when reaching 90% of MAX_LOGS (proactive cleanup)
 
   // Logger instance
   const Logger = {
@@ -75,13 +76,53 @@
       };
     },
 
+    // Automatic log cleanup function - cleans logs proactively and on errors
+    _cleanupLogs(reason = 'auto', targetSize = null) {
+      const beforeCount = this.logs.length;
+      const cleanupThreshold = targetSize || Math.floor(MAX_LOGS * CLEANUP_THRESHOLD);
+      
+      if (this.logs.length > cleanupThreshold) {
+        // Keep the most recent logs (prioritize ERROR/WARN if needed)
+        const logsToKeep = Math.max(cleanupThreshold, Math.floor(MAX_LOGS * 0.8));
+        const removedCount = this.logs.length - logsToKeep;
+        
+        // Keep ERROR/WARN logs and recent logs
+        const errorWarnLogs = this.logs.filter(log => log.level === 'ERROR' || log.level === 'WARN');
+        const recentLogs = this.logs.slice(-logsToKeep);
+        
+        // Combine: prefer ERROR/WARN, then recent logs
+        const combined = [...errorWarnLogs, ...recentLogs];
+        const uniqueLogs = Array.from(
+          new Map(combined.map(log => [log.timestamp, log])).values()
+        );
+        
+        // Sort by timestamp and keep the target size
+        this.logs = uniqueLogs
+          .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+          .slice(-logsToKeep);
+        
+        const afterCount = this.logs.length;
+        if (beforeCount !== afterCount) {
+          console.log(`[Logger] Cleaned ${removedCount} logs (${beforeCount} → ${afterCount}) - reason: ${reason}`);
+        }
+      }
+      
+      return { beforeCount, afterCount: this.logs.length, removed: beforeCount - this.logs.length };
+    },
+
     // Add log to array and save
     _addLog(entry) {
       this.logs.push(entry);
 
-      // Trim if too many
+      // Proactive cleanup: clean logs when reaching 90% of MAX_LOGS
+      // This prevents hitting the hard limit and improves performance
+      if (this.logs.length >= Math.floor(MAX_LOGS * CLEANUP_THRESHOLD)) {
+        this._cleanupLogs('auto-threshold');
+      }
+      
+      // Hard limit: ensure we never exceed MAX_LOGS (safety net)
       if (this.logs.length > MAX_LOGS) {
-        this.logs = this.logs.slice(-MAX_LOGS);
+        this._cleanupLogs('max-limit', MAX_LOGS);
       }
 
       // Save to storage (debounced)
@@ -95,7 +136,31 @@
 
       this._saveTimeout = setTimeout(() => {
         if (typeof chrome !== 'undefined' && chrome.storage) {
-          chrome.storage.local.set({ debugLogs: this.logs });
+          // Proactive cleanup before saving
+          this._cleanupLogs('pre-save');
+          
+          // Save with error handling for quota issues
+          chrome.storage.local.set({ debugLogs: this.logs }).catch((e) => {
+            // Handle quota errors with automatic cleanup
+            if (e.message && e.message.includes('QUOTA_BYTES')) {
+              console.warn('[Logger] Storage quota exceeded, cleaning logs and retrying');
+              // Clean logs more aggressively (keep only 70% of MAX_LOGS)
+              const aggressiveCleanupSize = Math.floor(MAX_LOGS * 0.7);
+              this._cleanupLogs('quota-error', aggressiveCleanupSize);
+              
+              // Retry with cleaned logs
+              chrome.storage.local.set({ debugLogs: this.logs }).catch((e2) => {
+                console.error('[Logger] Failed to save logs even after cleanup:', e2);
+                // Last resort: keep only ERROR logs
+                const errorLogs = this.logs.filter(log => log.level === 'ERROR').slice(-Math.floor(MAX_LOGS * 0.5));
+                chrome.storage.local.set({ debugLogs: errorLogs }).catch((e3) => {
+                  console.error('[Logger] Critical: Could not save any logs to storage:', e3);
+                });
+              });
+            } else {
+              console.error('[Logger] Failed to save logs:', e);
+            }
+          });
         }
       }, 1000);
     },

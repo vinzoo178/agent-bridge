@@ -211,6 +211,11 @@ async function handleChatRequest(req, res, message, extensionId, conversationId,
   // Create request ID
   const requestId = uuidv4();
   
+  // Use extended timeout to handle slow platforms like z.ai with deepthink mode
+  // z.ai deepthink can take 5-10 minutes, so use 10 minutes as default
+  // This is safe for all platforms - faster platforms will just respond sooner
+  const timeoutMs = 600000; // 10 minutes (handles z.ai deepthink and other slow responses)
+  
   // Create promise that will be resolved when extension responds
   const responsePromise = new Promise((resolve, reject) => {
     pendingRequests.set(requestId, {
@@ -218,8 +223,9 @@ async function handleChatRequest(req, res, message, extensionId, conversationId,
       reject,
       timeout: setTimeout(() => {
         pendingRequests.delete(requestId);
-        reject(new Error('Request timeout (30s)'));
-      }, 30000) // 30 second timeout
+        const timeoutSeconds = Math.floor(timeoutMs / 1000);
+        reject(new Error(`Request timeout (${timeoutSeconds}s)`));
+      }, timeoutMs)
     });
   });
   

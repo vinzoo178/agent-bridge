@@ -2023,6 +2023,7 @@ function renderAvailableAgents(agents) {
     const isAvailable = availability.available !== false;
     const warningReason = availability.reason || null;
     const requiresLogin = availability.requiresLogin || false;
+    const isDeepthink = availability.deepthink || false;
 
     return `
       <div class="available-agent-item ${isAvailable ? '' : 'unavailable'}" data-tab-id="${agent.tabId}">
@@ -2032,9 +2033,11 @@ function renderAvailableAgents(agents) {
             <div class="agent-title">
               ${escapeHtml(title)}
               ${!isAvailable ? '<span class="availability-warning" title="' + escapeHtml(warningReason || 'Not available') + '">⚠️</span>' : ''}
+              ${isDeepthink ? '<span class="deepthink-warning" title="DeepThink mode active - responses may take 5-10 minutes">🧠</span>' : ''}
             </div>
             <div class="agent-platform">${platformName}</div>
             ${!isAvailable && warningReason ? `<div class="agent-warning-text">${escapeHtml(warningReason)}</div>` : ''}
+            ${isDeepthink ? `<div class="agent-warning-text deepthink-text">🧠 DeepThink mode: Extended timeout (10 min)</div>` : ''}
           </div>
         </div>
         <div class="agent-actions">
