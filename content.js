@@ -193,6 +193,21 @@
         const availability = checkAgentAvailability();
         sendResponse(availability);
         return true;
+
+      case 'CHECK_RESPONSE':
+        // Check if response is ready (without starting polling)
+        // Used by background script for periodic checking
+        const responseText = getLatestResponse();
+        const isStillGenerating = isGenerating();
+        const hasResponse = responseText && responseText.length >= 20 && responseText !== lastResponseText;
+        
+        sendResponse({
+          hasResponse: hasResponse,
+          isGenerating: isStillGenerating,
+          responseText: hasResponse ? responseText : null,
+          responseLength: responseText ? responseText.length : 0
+        });
+        return true;
       }
 
       return false;

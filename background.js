@@ -33,7 +33,10 @@ const state = {
     contextMessages: 4, // Number of recent messages to include as context
     initialPrompt: '',
     templateType: null, // Template type: 'debate', 'story', 'qa', 'brainstorm', or null
-    activateTabs: true // Automatically activate tabs before sending messages (helps with inactive tabs)
+    activateTabs: 'hybrid', // Tab activation mode: 'always' (always activate - recommended), 'never' (never activate - may not work reliably), 'hybrid' (visibility override - makes background tabs appear active)
+    hybridActivationTime: 1500, // Brief activation time in ms for hybrid mode (how long to activate agent tab)
+    hybridCheckInterval: 30000, // Check interval in ms for hybrid mode (how often to check for responses)
+    hybridInitialDelay: 30000 // Initial delay in ms before first check in hybrid mode
   }
 };
 
@@ -1375,15 +1378,19 @@ async function removeParticipant(position) {
   }
 
   // Get participant info before removing
-  const participant = state.participants[position - 1];
+  const participantIndex = position - 1; // Convert to 0-based index
+  const participant = state.participants[participantIndex];
   if (!participant) {
     return { success: false, error: 'Participant not found' };
   }
 
   const { tabId, platform } = participant;
 
+  // Clean up pending response and restore original tab if exists
+  await restoreOriginalActiveTab(participantIndex);
+
   // Remove from participants array
-  state.participants.splice(position - 1, 1);
+  state.participants.splice(participantIndex, 1);
 
   // Update order numbers for remaining participants
   state.participants.forEach((p, idx) => {
@@ -1432,6 +1439,9 @@ async function unregisterSession(sessionNum) {
 // Store pending backend requests
 const pendingBackendRequests = new Map(); // requestId -> { sessionNum, timestamp }
 
+// Track pending responses to restore original active tabs
+const pendingResponses = new Map(); // participantIndex -> { originalActiveTabId, activationTimer, activatedAt, restoredAt, checkInterval, checkCount, lastResponseText }
+
 async function handleAIResponse(response, sessionNum, requestId) {
   bgLog('handleAIResponse from session:', sessionNum, 'requestId:', requestId);
   bgLog('Response length:', response.length);
@@ -1446,6 +1456,11 @@ async function handleAIResponse(response, sessionNum, requestId) {
       p && ((p.order === sessionNum) || (state.participants.indexOf(p) + 1 === sessionNum))
     );
     const platform = participantIndex >= 0 ? state.participants[participantIndex]?.platform : null;
+    
+    // Restore original active tab if we used delayed activation (for backend requests)
+    if (participantIndex >= 0) {
+      await restoreOriginalActiveTab(participantIndex);
+    }
     
     pendingBackendRequests.set(requestId, { sessionNum, timestamp: Date.now(), platform });
 
@@ -1479,6 +1494,9 @@ async function handleAIResponse(response, sessionNum, requestId) {
   }
 
   const participant = state.participants[participantIndex];
+
+  // Restore original active tab if we used delayed activation
+  await restoreOriginalActiveTab(participantIndex);
 
   // Use response as-is, let the prompt control response length
   const finalResponse = response.trim();
@@ -1666,6 +1684,27 @@ async function stopConversation() {
   state.isActive = false;
   await chrome.storage.local.set({ isActive: false });
 
+  // Clean up any pending responses and restore original tabs
+  for (const [participantIndex, pending] of pendingResponses.entries()) {
+    if (pending.checkInterval) {
+      clearInterval(pending.checkInterval);
+    }
+    if (pending.activationTimer) {
+      clearTimeout(pending.activationTimer);
+    }
+    try {
+      if (pending.originalActiveTabId) {
+        const tab = await chrome.tabs.get(pending.originalActiveTabId);
+        if (tab) {
+          await chrome.tabs.update(pending.originalActiveTabId, { active: true });
+        }
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+  }
+  pendingResponses.clear();
+
   broadcastStateUpdate();
 
   // Notify all participants to stop
@@ -1708,6 +1747,255 @@ async function activateTabIfNeeded(tabId) {
   }
 }
 
+// Try to send message to a tab (may be inactive)
+async function trySendMessageToTab(tabId, message) {
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// Make a tab appear active to websites by overriding visibility APIs
+// This allows background tabs to remain interactive
+async function makeTabAppearActive(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        // Override document.hidden
+        Object.defineProperty(document, 'hidden', {
+          get: () => false,
+          configurable: true
+        });
+        
+        // Override document.visibilityState
+        Object.defineProperty(document, 'visibilityState', {
+          get: () => 'visible',
+          configurable: true
+        });
+        
+        // Override document.visibilitychange event
+        // Prevent visibility change events from firing
+        const originalAddEventListener = document.addEventListener;
+        document.addEventListener = function(type, listener, options) {
+          if (type === 'visibilitychange') {
+            // Don't add visibilitychange listeners - they won't fire
+            return;
+          }
+          return originalAddEventListener.call(this, type, listener, options);
+        };
+        
+        // Override Page Visibility API methods
+        if (document.webkitHidden !== undefined) {
+          Object.defineProperty(document, 'webkitHidden', {
+            get: () => false,
+            configurable: true
+          });
+        }
+        
+        if (document.webkitVisibilityState !== undefined) {
+          Object.defineProperty(document, 'webkitVisibilityState', {
+            get: () => 'visible',
+            configurable: true
+          });
+        }
+        
+        // Override window focus/blur events
+        const originalWindowFocus = window.focus;
+        window.focus = function() {
+          // Always appear focused
+          return originalWindowFocus.call(this);
+        };
+        
+        // Override document.hasFocus
+        if (document.hasFocus) {
+          document.hasFocus = () => true;
+        }
+        
+        console.log('[AI Bridge] Tab visibility overrides applied - tab will appear active to websites');
+      }
+    });
+    
+    bgLog(`Applied visibility overrides to tab ${tabId} - it will appear active to websites`);
+    return { success: true };
+  } catch (error) {
+    bgWarn(`Failed to apply visibility overrides to tab ${tabId}:`, error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get the currently active tab in the window
+async function getCurrentActiveTab(windowId = null) {
+  try {
+    const query = windowId ? { active: true, windowId: windowId } : { active: true, currentWindow: true };
+    const tabs = await chrome.tabs.query(query);
+    return tabs.length > 0 ? tabs[0].id : null;
+  } catch (error) {
+    bgWarn('Failed to get current active tab:', error.message);
+    return null;
+  }
+}
+
+// Start periodic checking for response (for hybrid mode)
+// Strategy: Briefly activate agent tab (configurable), check for response, restore original tab, wait (configurable), repeat
+function startPeriodicChecking(participantIndex, agentTabId, originalActiveTabId, requestId) {
+  let checkCount = 0;
+  const checkInterval = state.config.hybridCheckInterval || 30000; // Check interval (configurable)
+  const maxChecks = Math.floor(360000 / checkInterval); // 6 minutes max
+  let lastResponseLength = 0;
+  let stableResponseCount = 0;
+  const STABLE_THRESHOLD = 2; // Response must be stable for 2 checks
+  const briefActivationTime = state.config.hybridActivationTime || 1500; // Activate time (configurable)
+  
+  bgLog(`Starting periodic checking for participant ${participantIndex + 1} (checks every 30s with 1.5s activation)`);
+  
+  const intervalId = setInterval(async () => {
+    checkCount++;
+    bgLog(`Periodic check #${checkCount} for participant ${participantIndex + 1}`);
+    
+    try {
+      // Briefly activate agent tab to check for response (1.5 seconds)
+      const agentTab = await chrome.tabs.get(agentTabId);
+      const wasActive = agentTab.active;
+      if (!wasActive) {
+        bgLog(`Briefly activating agent tab ${agentTabId} for check #${checkCount} (1.5s)`);
+        await chrome.tabs.update(agentTabId, { active: true });
+        await new Promise(resolve => setTimeout(resolve, briefActivationTime)); // Wait 1.5s for activation and check
+      } else {
+        // Tab is already active, just wait a bit
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      // Check for response
+      const checkResult = await chrome.tabs.sendMessage(agentTabId, { type: 'CHECK_RESPONSE' });
+      
+      // Restore original tab immediately after checking (unless response is complete)
+      if (originalActiveTabId) {
+        try {
+          const originalTab = await chrome.tabs.get(originalActiveTabId);
+          if (originalTab && !originalTab.active) {
+            await chrome.tabs.update(originalActiveTabId, { active: true });
+            bgLog(`Restored original tab after check #${checkCount}`);
+          }
+        } catch (restoreError) {
+          // Ignore errors
+        }
+      }
+      
+      if (checkResult) {
+        const currentResponseLength = checkResult.responseLength || 0;
+        const isGenerating = checkResult.isGenerating || false;
+        
+        // Check if response is complete (not generating and response is stable)
+        if (checkResult.hasResponse && checkResult.responseText && !isGenerating) {
+          // Response length is stable (not changing)
+          if (currentResponseLength === lastResponseLength) {
+            stableResponseCount++;
+            bgLog(`Response stable count: ${stableResponseCount}/${STABLE_THRESHOLD}, length: ${currentResponseLength}`);
+            
+            if (stableResponseCount >= STABLE_THRESHOLD) {
+              // Response is complete and stable! Report it and restore original tab
+              bgLog(`Response complete after ${checkCount} checks, length: ${checkResult.responseText.length}`);
+              
+              // Stop checking
+              clearInterval(intervalId);
+              const pending = pendingResponses.get(participantIndex);
+              if (pending) {
+                pending.checkInterval = null;
+              }
+              
+              // Restore original tab
+              await restoreOriginalActiveTab(participantIndex);
+              
+              // Report the response (same as if content script reported it)
+              const participant = state.participants[participantIndex];
+              const sessionNum = participantIndex + 1; // 1-based
+              await handleAIResponse(checkResult.responseText, sessionNum, requestId);
+              
+              return;
+            }
+          } else {
+            // Response is still changing, reset stability counter
+            stableResponseCount = 0;
+            lastResponseLength = currentResponseLength;
+            bgLog(`Response still changing, length: ${currentResponseLength}`);
+          }
+        } else if (isGenerating) {
+          // Still generating, reset stability counter
+          stableResponseCount = 0;
+          bgLog(`Still generating response...`);
+        } else {
+          // No response yet
+          stableResponseCount = 0;
+          bgLog(`No response yet (check #${checkCount})`);
+        }
+      }
+      
+      // Update pending info
+      const pending = pendingResponses.get(participantIndex);
+      if (pending) {
+        pending.checkCount = checkCount;
+      }
+      
+      // Check timeout
+      if (checkCount >= maxChecks) {
+        bgWarn(`Periodic checking timeout after ${checkCount} checks for participant ${participantIndex + 1}`);
+        clearInterval(intervalId);
+        const pending = pendingResponses.get(participantIndex);
+        if (pending) {
+          pending.checkInterval = null;
+        }
+        await restoreOriginalActiveTab(participantIndex);
+      }
+    } catch (error) {
+      bgError(`Error in periodic check for participant ${participantIndex + 1}:`, error.message);
+      // Continue checking
+    }
+  }, checkInterval);
+  
+  // Store interval ID
+  const pending = pendingResponses.get(participantIndex);
+  if (pending) {
+    pending.checkInterval = intervalId;
+    pending.checkCount = 0;
+  }
+}
+
+// Restore original active tab after response is received (cleanup function)
+async function restoreOriginalActiveTab(participantIndex) {
+  const pending = pendingResponses.get(participantIndex);
+  if (!pending || !pending.originalActiveTabId) {
+    return;
+  }
+
+  // Stop any active checking interval
+  if (pending.checkInterval) {
+    clearInterval(pending.checkInterval);
+    pending.checkInterval = null;
+  }
+
+  // Restore original tab
+  try {
+    const tab = await chrome.tabs.get(pending.originalActiveTabId);
+    if (tab) {
+      bgLog(`Restoring original active tab ${pending.originalActiveTabId} for participant ${participantIndex + 1}`);
+      await chrome.tabs.update(pending.originalActiveTabId, { active: true });
+    }
+  } catch (error) {
+    bgLog(`Original tab ${pending.originalActiveTabId} no longer exists or can't be restored:`, error.message);
+  }
+
+  // Clean up timers
+  if (pending.activationTimer) {
+    clearTimeout(pending.activationTimer);
+  }
+
+  // Remove from map
+  pendingResponses.delete(participantIndex);
+}
+
 // Send message to a participant by index (0-based)
 async function sendMessageToParticipant(participantIndex, text, requestId = null) {
   if (participantIndex < 0 || participantIndex >= state.participants.length) {
@@ -1740,11 +2028,6 @@ async function sendMessageToParticipant(participantIndex, text, requestId = null
         return { success: false, error: `Participant ${participantIndex + 1} tab was closed` };
       }
       bgLog(`Participant ${participantIndex + 1} tab verified:`, tab.url, 'active:', tab.active);
-      
-      // Activate tab if needed (helps with inactive tabs that can't receive messages)
-      if (state.config.activateTabs !== false) {
-        await activateTabIfNeeded(participant.tabId);
-      }
     } catch (tabError) {
       bgError(`Participant ${participantIndex + 1} tab error:`, tabError.message);
       // Tab was closed or doesn't exist
@@ -1764,9 +2047,102 @@ async function sendMessageToParticipant(participantIndex, text, requestId = null
       bgLog('Forwarding message with requestId:', requestId, 'to participant', participantIndex + 1);
     }
 
-    await chrome.tabs.sendMessage(participant.tabId, message);
-    bgLog(`Message sent successfully to participant ${participantIndex + 1}`);
-    return { success: true };
+    // Handle tab activation based on config mode
+    const activateMode = state.config.activateTabs || 'hybrid'; // Default to 'hybrid' for backward compatibility
+    
+    if (activateMode === 'always') {
+      // Always activate tabs before sending (recommended for reliability)
+      await activateTabIfNeeded(participant.tabId);
+      await chrome.tabs.sendMessage(participant.tabId, message);
+      bgLog(`Message sent successfully to participant ${participantIndex + 1} (tab activated)`);
+      return { success: true };
+    } else if (activateMode === 'never') {
+      // Never activate tabs - WARNING: This may not work reliably for response polling
+      // Chrome throttles timers in inactive tabs, so polling may fail or be very slow
+      bgWarn(`Sending to inactive tab ${participant.tabId} (polling may not work reliably)`);
+      const result = await trySendMessageToTab(participant.tabId, message);
+      if (result.success) {
+        bgLog(`Message sent successfully to participant ${participantIndex + 1} (tab not activated - response polling may be unreliable)`);
+        return { success: true };
+      } else {
+        bgError(`Failed to send to inactive tab ${participant.tabId}:`, result.error);
+        return { success: false, error: `Failed to send to inactive tab: ${result.error}` };
+      }
+    } else {
+      // 'hybrid' mode: Activate tab to send message and generate response, then periodically check
+      // Strategy: Activate tab, send message, keep it active for generation, then restore when done
+      
+      bgLog(`Hybrid mode: Activating tab to send message to participant ${participantIndex + 1}...`);
+      
+      // Get current active tab to restore later
+      const originalActiveTabId = await getCurrentActiveTab();
+      
+      // Get configured timeout values
+      const activationTime = state.config.hybridActivationTime || 1500;
+      const initialDelay = state.config.hybridInitialDelay || 30000;
+      
+      // Activate agent tab briefly (configurable time) to send message
+      await activateTabIfNeeded(participant.tabId);
+      await new Promise(resolve => setTimeout(resolve, 500)); // Wait for tab to activate
+      
+      // Send message (tab is now active)
+      try {
+        await chrome.tabs.sendMessage(participant.tabId, message);
+        bgLog(`Message sent successfully to participant ${participantIndex + 1} (tab activated)`);
+      } catch (sendError) {
+        bgError(`Failed to send message to participant ${participantIndex + 1}:`, sendError.message);
+        // Restore original tab if we had one
+        if (originalActiveTabId && originalActiveTabId !== participant.tabId) {
+          try {
+            await chrome.tabs.update(originalActiveTabId, { active: true });
+          } catch (e) {
+            // Ignore
+          }
+        }
+        return { success: false, error: sendError.message };
+      }
+      
+      // Wait remaining time to complete activation time
+      const remainingTime = Math.max(0, activationTime - 500);
+      await new Promise(resolve => setTimeout(resolve, remainingTime));
+      
+      // Restore original tab after brief activation
+      if (originalActiveTabId && originalActiveTabId !== participant.tabId) {
+        bgLog(`Restoring original active tab ${originalActiveTabId} after ${activationTime}ms activation`);
+        try {
+          await chrome.tabs.update(originalActiveTabId, { active: true });
+          bgLog(`Original tab ${originalActiveTabId} restored`);
+        } catch (restoreError) {
+          bgWarn(`Failed to restore original tab:`, restoreError.message);
+        }
+        
+        // Clean up any existing pending response for this participant
+        const existingPending = pendingResponses.get(participantIndex);
+        if (existingPending) {
+          if (existingPending.activationTimer) clearTimeout(existingPending.activationTimer);
+          if (existingPending.checkInterval) clearInterval(existingPending.checkInterval);
+        }
+        
+        // Start periodic checking after configured initial delay
+        const delayTimer = setTimeout(() => {
+          startPeriodicChecking(participantIndex, participant.tabId, originalActiveTabId, requestId);
+        }, initialDelay);
+        
+        // Store pending response info
+        pendingResponses.set(participantIndex, {
+          originalActiveTabId: originalActiveTabId,
+          activationTimer: delayTimer,
+          activatedAt: null,
+          restoredAt: null,
+          checkInterval: null,
+          checkCount: 0,
+          lastResponseText: ''
+        });
+      }
+      
+      bgLog(`Message sent successfully to participant ${participantIndex + 1} (hybrid mode - original tab restored, periodic checking will start)`);
+      return { success: true };
+    }
   } catch (error) {
     bgError(`Error sending to participant ${participantIndex + 1}:`, error.message);
 
@@ -2125,7 +2501,19 @@ async function checkTabRegistration(tabId) {
 }
 
 async function updateConfig(newConfig) {
+  // Handle backward compatibility: convert boolean activateTabs to string mode
+  if (typeof newConfig.activateTabs === 'boolean') {
+    newConfig.activateTabs = newConfig.activateTabs ? 'always' : 'never';
+    bgLog('Converting boolean activateTabs to mode:', newConfig.activateTabs);
+  }
+  
   state.config = { ...state.config, ...newConfig };
+  
+  // Ensure activateTabs has a valid value
+  if (!state.config.activateTabs || !['always', 'never', 'hybrid'].includes(state.config.activateTabs)) {
+    state.config.activateTabs = 'hybrid';
+  }
+  
   await chrome.storage.local.set({ config: state.config });
 
   broadcastStateUpdate();
@@ -2274,6 +2662,18 @@ async function restoreStateFromStorage() {
     }
     if (result.config) {
       state.config = { ...state.config, ...result.config };
+      
+      // Handle backward compatibility: convert boolean activateTabs to string mode
+      if (typeof state.config.activateTabs === 'boolean') {
+        state.config.activateTabs = state.config.activateTabs ? 'always' : 'never';
+        bgLog('Converting boolean activateTabs to mode during restore:', state.config.activateTabs);
+        await chrome.storage.local.set({ config: state.config }); // Save converted value
+      }
+      
+      // Ensure activateTabs has a valid value
+      if (!state.config.activateTabs || !['always', 'never', 'hybrid'].includes(state.config.activateTabs)) {
+        state.config.activateTabs = 'hybrid';
+      }
     }
 
     // Restore available agents pool

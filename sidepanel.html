@@ -300,6 +300,35 @@
               <span class="input-suffix">msgs</span>
             </div>
           </div>
+          
+          <div class="config-item">
+            <label for="activate-tabs">Tab Activation</label>
+            <div class="input-group">
+              <select id="activate-tabs">
+                <option value="hybrid">Hybrid (Background with visibility override)</option>
+                <option value="always">Always Activate (Recommended)</option>
+                <option value="never">Never Activate (⚠️ May not work reliably)</option>
+              </select>
+            </div>
+            <small class="config-hint">Hybrid mode: Activates agent tab briefly to generate responses, checks periodically, and restores your tab when complete. "Never activate" may not work reliably.</small>
+          </div>
+          
+          <div class="config-item" id="hybrid-timeout-settings" style="display: none;">
+            <label>Hybrid Mode Timeouts</label>
+            <div class="input-group">
+              <label for="hybrid-activation-time" class="text-xs text-gray-600">Brief Activation Time (ms):</label>
+              <input type="number" id="hybrid-activation-time" min="500" max="5000" step="100" class="input-sm">
+            </div>
+            <div class="input-group mt-2">
+              <label for="hybrid-check-interval" class="text-xs text-gray-600">Check Interval (ms):</label>
+              <input type="number" id="hybrid-check-interval" min="5000" max="120000" step="1000" class="input-sm">
+            </div>
+            <div class="input-group mt-2">
+              <label for="hybrid-initial-delay" class="text-xs text-gray-600">Initial Delay Before First Check (ms):</label>
+              <input type="number" id="hybrid-initial-delay" min="5000" max="120000" step="1000" class="input-sm">
+            </div>
+            <small class="config-hint">Configure timing for hybrid mode: how long to activate agent tab, how often to check, and delay before first check.</small>
+          </div>
         </div>
         
         <button class="btn btn-secondary btn-sm" id="save-config">

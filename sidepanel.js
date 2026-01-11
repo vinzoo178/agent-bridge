@@ -29,6 +29,10 @@ const elements = {
   replyDelay: document.getElementById('reply-delay'),
   maxTurns: document.getElementById('max-turns'),
   contextMessages: document.getElementById('context-messages'),
+  activateTabs: document.getElementById('activate-tabs'),
+  hybridActivationTime: document.getElementById('hybrid-activation-time'),
+  hybridCheckInterval: document.getElementById('hybrid-check-interval'),
+  hybridInitialDelay: document.getElementById('hybrid-initial-delay'),
   saveConfig: document.getElementById('save-config'),
   topicInput: document.getElementById('topic-input'),
   initialPrompt: document.getElementById('initial-prompt'),
@@ -212,6 +216,29 @@ async function loadConfigOnce() {
       elements.replyDelay.value = configData.config.autoReplyDelay || 2000;
       elements.maxTurns.value = configData.config.maxTurns || 50;
       elements.contextMessages.value = configData.config.contextMessages || 4;
+      // Handle activateTabs: support both old boolean and new string mode
+      let activateTabsValue = configData.config.activateTabs || 'hybrid';
+      if (typeof activateTabsValue === 'boolean') {
+        activateTabsValue = activateTabsValue ? 'always' : 'never';
+      }
+      if (!['always', 'never', 'hybrid'].includes(activateTabsValue)) {
+        activateTabsValue = 'hybrid';
+      }
+      elements.activateTabs.value = activateTabsValue;
+      
+      // Load hybrid mode timeout settings
+      if (elements.hybridActivationTime) {
+        elements.hybridActivationTime.value = configData.config.hybridActivationTime || 1500;
+      }
+      if (elements.hybridCheckInterval) {
+        elements.hybridCheckInterval.value = configData.config.hybridCheckInterval || 30000;
+      }
+      if (elements.hybridInitialDelay) {
+        elements.hybridInitialDelay.value = configData.config.hybridInitialDelay || 30000;
+      }
+      
+      // Show/hide hybrid timeout settings based on mode
+      updateHybridSettingsVisibility(activateTabsValue);
     }
   } catch (error) {
     spError('[Side Panel] Failed to load config:', error);
@@ -290,6 +317,9 @@ function setupEventListeners() {
   elements.replyDelay.addEventListener('input', () => { configModified = true; });
   elements.maxTurns.addEventListener('input', () => { configModified = true; });
   elements.contextMessages.addEventListener('input', () => { configModified = true; });
+  if (elements.activateTabs) {
+    elements.activateTabs.addEventListener('change', () => { configModified = true; });
+  }
 
   // Save config
   elements.saveConfig.addEventListener('click', saveConfiguration);
@@ -772,7 +802,11 @@ async function saveConfiguration() {
   const config = {
     autoReplyDelay: parseInt(elements.replyDelay.value) || 2000,
     maxTurns: parseInt(elements.maxTurns.value) || 50,
-    contextMessages: parseInt(elements.contextMessages.value) || 4
+    contextMessages: parseInt(elements.contextMessages.value) || 4,
+    activateTabs: elements.activateTabs ? elements.activateTabs.value : 'hybrid',
+    hybridActivationTime: elements.hybridActivationTime ? parseInt(elements.hybridActivationTime.value) || 1500 : 1500,
+    hybridCheckInterval: elements.hybridCheckInterval ? parseInt(elements.hybridCheckInterval.value) || 30000 : 30000,
+    hybridInitialDelay: elements.hybridInitialDelay ? parseInt(elements.hybridInitialDelay.value) || 30000 : 30000
   };
 
   spLog('[Side Panel] Saving config:', config);
@@ -1482,6 +1516,13 @@ async function downloadConversation() {
   } catch (error) {
     spError('[Side Panel] Failed to download conversation:', error);
     showToast('❌ Failed to download', 'error');
+  }
+}
+
+function updateHybridSettingsVisibility(mode) {
+  const settingsDiv = document.getElementById('hybrid-timeout-settings');
+  if (settingsDiv) {
+    settingsDiv.style.display = (mode === 'hybrid') ? 'block' : 'none';
   }
 }
 
