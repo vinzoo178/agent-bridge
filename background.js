@@ -1442,6 +1442,101 @@ const pendingBackendRequests = new Map(); // requestId -> { sessionNum, timestam
 // Track pending responses to restore original active tabs
 const pendingResponses = new Map(); // participantIndex -> { originalActiveTabId, activationTimer, activatedAt, restoredAt, checkInterval, checkCount, lastResponseText }
 
+// Per-platform timeout optimization (self-learning)
+// Structure: platformName -> { activationTime, checkInterval, initialDelay, successCount, totalCount, lastOptimized }
+const platformOptimizedTimeouts = new Map();
+
+// Load optimized timeouts from storage
+async function loadOptimizedTimeouts() {
+  try {
+    const result = await chrome.storage.local.get(['platformOptimizedTimeouts']);
+    if (result.platformOptimizedTimeouts) {
+      for (const [platform, data] of Object.entries(result.platformOptimizedTimeouts)) {
+        platformOptimizedTimeouts.set(platform, data);
+      }
+      bgLog(`Loaded optimized timeouts for ${platformOptimizedTimeouts.size} platforms`);
+    }
+  } catch (error) {
+    bgWarn('Failed to load optimized timeouts:', error.message);
+  }
+}
+
+// Save optimized timeouts to storage
+async function saveOptimizedTimeouts() {
+  try {
+    const data = Object.fromEntries(platformOptimizedTimeouts);
+    await chrome.storage.local.set({ platformOptimizedTimeouts: data });
+    bgLog('Saved optimized timeouts');
+  } catch (error) {
+    bgWarn('Failed to save optimized timeouts:', error.message);
+  }
+}
+
+// Get optimized timeout for a platform, or return defaults
+function getOptimizedTimeout(platformName) {
+  const optimized = platformOptimizedTimeouts.get(platformName);
+  if (optimized && optimized.activationTime && optimized.checkInterval && optimized.initialDelay) {
+    return {
+      activationTime: optimized.activationTime,
+      checkInterval: optimized.checkInterval,
+      initialDelay: optimized.initialDelay
+    };
+  }
+  // Return defaults
+  return {
+    activationTime: state.config.hybridActivationTime || 1500,
+    checkInterval: state.config.hybridCheckInterval || 30000,
+    initialDelay: state.config.hybridInitialDelay || 30000
+  };
+}
+
+// Record timeout performance and adjust if needed (adaptive learning)
+async function recordTimeoutPerformance(platformName, timeoutUsed, responseTime, success, wasCutoff) {
+  if (!platformName) return;
+  
+  const optimized = platformOptimizedTimeouts.get(platformName) || {
+    activationTime: state.config.hybridActivationTime || 1500,
+    checkInterval: state.config.hybridCheckInterval || 30000,
+    initialDelay: state.config.hybridInitialDelay || 30000,
+    successCount: 0,
+    totalCount: 0,
+    lastOptimized: Date.now()
+  };
+  
+  optimized.totalCount = (optimized.totalCount || 0) + 1;
+  if (success) {
+    optimized.successCount = (optimized.successCount || 0) + 1;
+  }
+  
+  // Adaptive adjustment logic
+  const successRate = optimized.successCount / optimized.totalCount;
+  const needsOptimization = optimized.totalCount >= 5; // Optimize after 5 attempts
+  
+  if (needsOptimization && Date.now() - (optimized.lastOptimized || 0) > 60000) { // Re-optimize every minute
+    const defaultInterval = state.config.hybridCheckInterval || 30000;
+    const defaultDelay = state.config.hybridInitialDelay || 30000;
+    
+    // Adjust based on response time and success rate
+    if (wasCutoff && responseTime < timeoutUsed) {
+      // Response was cut off - increase timeout
+      optimized.checkInterval = Math.min(optimized.checkInterval * 1.2, defaultInterval * 2);
+      optimized.initialDelay = Math.min(optimized.initialDelay * 1.2, defaultDelay * 2);
+      bgLog(`[Optimization] ${platformName}: Increasing timeout (cutoff detected)`);
+    } else if (success && responseTime < timeoutUsed * 0.5 && successRate > 0.8) {
+      // Responses are fast and reliable - can decrease timeout
+      optimized.checkInterval = Math.max(optimized.checkInterval * 0.9, defaultInterval * 0.5);
+      optimized.initialDelay = Math.max(optimized.initialDelay * 0.9, defaultDelay * 0.5);
+      bgLog(`[Optimization] ${platformName}: Decreasing timeout (fast responses)`);
+    }
+    
+    optimized.lastOptimized = Date.now();
+    platformOptimizedTimeouts.set(platformName, optimized);
+    await saveOptimizedTimeouts();
+  } else {
+    platformOptimizedTimeouts.set(platformName, optimized);
+  }
+}
+
 async function handleAIResponse(response, sessionNum, requestId) {
   bgLog('handleAIResponse from session:', sessionNum, 'requestId:', requestId);
   bgLog('Response length:', response.length);
@@ -1841,13 +1936,20 @@ async function getCurrentActiveTab(windowId = null) {
 // Start periodic checking for response (for hybrid mode)
 // Strategy: Briefly activate agent tab (configurable), check for response, restore original tab, wait (configurable), repeat
 function startPeriodicChecking(participantIndex, agentTabId, originalActiveTabId, requestId) {
+  const participant = state.participants[participantIndex];
+  const platformName = participant?.platform || 'unknown';
+  
+  // Get optimized timeout for this platform
+  const optimizedTimeout = getOptimizedTimeout(platformName);
+  const checkInterval = optimizedTimeout.checkInterval;
+  const briefActivationTime = optimizedTimeout.activationTime;
+  
   let checkCount = 0;
-  const checkInterval = state.config.hybridCheckInterval || 30000; // Check interval (configurable)
   const maxChecks = Math.floor(360000 / checkInterval); // 6 minutes max
   let lastResponseLength = 0;
   let stableResponseCount = 0;
   const STABLE_THRESHOLD = 2; // Response must be stable for 2 checks
-  const briefActivationTime = state.config.hybridActivationTime || 1500; // Activate time (configurable)
+  const startTime = Date.now();
   
   bgLog(`Starting periodic checking for participant ${participantIndex + 1} (checks every 30s with 1.5s activation)`);
   
@@ -1897,7 +1999,8 @@ function startPeriodicChecking(participantIndex, agentTabId, originalActiveTabId
             
             if (stableResponseCount >= STABLE_THRESHOLD) {
               // Response is complete and stable! Report it and restore original tab
-              bgLog(`Response complete after ${checkCount} checks, length: ${checkResult.responseText.length}`);
+              const responseTime = Date.now() - startTime;
+              bgLog(`Response complete after ${checkCount} checks (${responseTime}ms), length: ${checkResult.responseText.length}`);
               
               // Stop checking
               clearInterval(intervalId);
@@ -1908,6 +2011,10 @@ function startPeriodicChecking(participantIndex, agentTabId, originalActiveTabId
               
               // Restore original tab
               await restoreOriginalActiveTab(participantIndex);
+              
+              // Record successful response for optimization
+              const totalTimeoutUsed = checkCount * checkInterval;
+              await recordTimeoutPerformance(platformName, totalTimeoutUsed, responseTime, true, false);
               
               // Report the response (same as if content script reported it)
               const participant = state.participants[participantIndex];
@@ -1941,12 +2048,18 @@ function startPeriodicChecking(participantIndex, agentTabId, originalActiveTabId
       
       // Check timeout
       if (checkCount >= maxChecks) {
-        bgWarn(`Periodic checking timeout after ${checkCount} checks for participant ${participantIndex + 1}`);
+        const responseTime = Date.now() - startTime;
+        bgWarn(`Periodic checking timeout after ${checkCount} checks (${responseTime}ms) for participant ${participantIndex + 1}`);
         clearInterval(intervalId);
         const pending = pendingResponses.get(participantIndex);
         if (pending) {
           pending.checkInterval = null;
         }
+        
+        // Record timeout failure for optimization (may need to increase timeout)
+        const totalTimeoutUsed = checkCount * checkInterval;
+        await recordTimeoutPerformance(platformName, totalTimeoutUsed, responseTime, false, true);
+        
         await restoreOriginalActiveTab(participantIndex);
       }
     } catch (error) {
@@ -2077,9 +2190,15 @@ async function sendMessageToParticipant(participantIndex, text, requestId = null
       // Get current active tab to restore later
       const originalActiveTabId = await getCurrentActiveTab();
       
-      // Get configured timeout values
-      const activationTime = state.config.hybridActivationTime || 1500;
-      const initialDelay = state.config.hybridInitialDelay || 30000;
+      // Get platform name for optimized timeouts
+      const platformName = participant.platform || 'unknown';
+      
+      // Get optimized timeout for this platform, or use configured defaults
+      const optimizedTimeout = getOptimizedTimeout(platformName);
+      const activationTime = optimizedTimeout.activationTime;
+      const initialDelay = optimizedTimeout.initialDelay;
+      
+      bgLog(`Using timeout for ${platformName}: activation=${activationTime}ms, initialDelay=${initialDelay}ms`);
       
       // Activate agent tab briefly (configurable time) to send message
       await activateTabIfNeeded(participant.tabId);
@@ -3008,6 +3127,9 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 
 // Auto-register on startup
 setTimeout(autoRegisterChatTabs, 3000);
+
+// Load optimized timeouts on startup
+loadOptimizedTimeouts();
 
 // ============================================
 // AUTO-OPEN REGISTERED URLS
