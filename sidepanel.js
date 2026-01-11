@@ -388,6 +388,7 @@ function setupEventListeners() {
         showToast('🔄 Refreshing agents...', 'success');
         setTimeout(() => {
           loadAvailableAgents();
+          loadRegisteredUrls(); // Also refresh platforms list
         }, 1000);
       } catch (error) {
         spError('[Side Panel] Refresh error:', error);
@@ -395,6 +396,43 @@ function setupEventListeners() {
       }
     });
   }
+
+  // Auto-open settings
+  const autoOpenOnStart = document.getElementById('auto-open-on-start');
+  const autoOpenEmptyTabs = document.getElementById('auto-open-empty-tabs');
+  const openSelectedPlatformsBtn = document.getElementById('open-selected-platforms-btn');
+  const openInEmptyTabsBtn = document.getElementById('open-in-empty-tabs-btn');
+
+  if (autoOpenOnStart) {
+    autoOpenOnStart.addEventListener('change', async () => {
+      await updateAutoOpenSettings({
+        openOnBrowserStart: autoOpenOnStart.checked
+      });
+    });
+  }
+
+  if (autoOpenEmptyTabs) {
+    autoOpenEmptyTabs.addEventListener('change', async () => {
+      await updateAutoOpenSettings({
+        openInEmptyTabs: autoOpenEmptyTabs.checked
+      });
+    });
+  }
+
+  if (openSelectedPlatformsBtn) {
+    openSelectedPlatformsBtn.addEventListener('click', async () => {
+      await openSelectedPlatforms();
+    });
+  }
+
+  if (openInEmptyTabsBtn) {
+    openInEmptyTabsBtn.addEventListener('click', async () => {
+      await openInEmptyTabs();
+    });
+  }
+
+  // Load registered URLs on startup
+  loadRegisteredUrls();
 
   // Listen for updates from background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -2129,6 +2167,179 @@ async function releaseAgentFromSlot(position) {
   } catch (error) {
     spError('[Side Panel] Release error:', error);
     showToast('❌ Failed to release agent', 'error');
+  }
+}
+
+// ============================================
+// AUTO-OPEN REGISTERED URLS MANAGEMENT
+// ============================================
+
+async function loadRegisteredUrls() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_REGISTERED_URLS' });
+    if (response && response.success) {
+      renderSupportedPlatforms(response.supportedPlatforms || [], response.selectedPlatforms || []);
+      
+      // Update settings checkboxes
+      const autoOpenOnStart = document.getElementById('auto-open-on-start');
+      const autoOpenEmptyTabs = document.getElementById('auto-open-empty-tabs');
+      
+      if (autoOpenOnStart && response.settings) {
+        autoOpenOnStart.checked = response.settings.openOnBrowserStart || false;
+      }
+      if (autoOpenEmptyTabs && response.settings) {
+        autoOpenEmptyTabs.checked = response.settings.openInEmptyTabs || false;
+      }
+    }
+  } catch (error) {
+    spError('[Side Panel] Failed to load platforms:', error);
+  }
+}
+
+function renderSupportedPlatforms(platforms, selectedUrls) {
+  const listContainer = document.getElementById('supported-platforms-list');
+  if (!listContainer) return;
+
+  if (!platforms || platforms.length === 0) {
+    listContainer.innerHTML = `
+      <div class="empty-state">
+        <p>No supported platforms found</p>
+      </div>
+    `;
+    return;
+  }
+
+  const selectedUrlsSet = new Set(selectedUrls);
+
+  listContainer.innerHTML = platforms.map(platform => {
+    const isSelected = selectedUrlsSet.has(platform.url);
+    const displayUrl = platform.url.length > 60 ? platform.url.substring(0, 60) + '...' : platform.url;
+
+    return `
+      <label class="platform-checkbox-item" data-url="${escapeHtml(platform.url)}">
+        <input type="checkbox" class="platform-checkbox" ${isSelected ? 'checked' : ''} data-url="${escapeHtml(platform.url)}">
+        <div class="platform-info">
+          <span class="platform-icon">${platform.icon || '❓'}</span>
+          <div class="platform-details">
+            <div class="platform-name">${escapeHtml(platform.name)}</div>
+            <div class="platform-url" title="${escapeHtml(platform.url)}">${escapeHtml(displayUrl)}</div>
+          </div>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  // Attach event listeners
+  listContainer.querySelectorAll('.platform-checkbox').forEach(checkbox => {
+    checkbox.addEventListener('change', async (e) => {
+      await updateSelectedPlatforms();
+    });
+  });
+}
+
+async function updateSelectedPlatforms() {
+  const checkboxes = document.querySelectorAll('.platform-checkbox');
+  const selectedUrls = Array.from(checkboxes)
+    .filter(cb => cb.checked)
+    .map(cb => cb.dataset.url);
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'UPDATE_SELECTED_PLATFORMS',
+      urls: selectedUrls
+    });
+
+    if (response && response.success) {
+      showToast(`✅ ${selectedUrls.length} platform(s) selected`, 'success');
+    } else {
+      showToast('❌ Failed to save selection', 'error');
+    }
+  } catch (error) {
+    spError('[Side Panel] Failed to update selected platforms:', error);
+    showToast('❌ Failed to save selection', 'error');
+  }
+}
+
+async function updateAutoOpenSettings(settings) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'UPDATE_AUTO_OPEN_SETTINGS',
+      settings: settings
+    });
+
+    if (response && response.success) {
+      showToast('✅ Settings saved', 'success');
+    } else {
+      showToast('❌ Failed to save settings', 'error');
+    }
+  } catch (error) {
+    spError('[Side Panel] Failed to update auto-open settings:', error);
+    showToast('❌ Failed to save settings', 'error');
+  }
+}
+
+async function openSelectedPlatforms() {
+  const openSelectedPlatformsBtn = document.getElementById('open-selected-platforms-btn');
+  try {
+    if (openSelectedPlatformsBtn) {
+      openSelectedPlatformsBtn.disabled = true;
+      openSelectedPlatformsBtn.innerHTML = '<svg class="btn-icon w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Opening...';
+    }
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'OPEN_SELECTED_PLATFORMS',
+      context: 'manual'
+    });
+
+    if (response && response.success) {
+      showToast(`✅ Opened ${response.opened || 0} platform(s)`, 'success');
+    } else {
+      showToast('❌ Failed to open platforms', 'error');
+    }
+  } catch (error) {
+    spError('[Side Panel] Failed to open selected platforms:', error);
+    showToast('❌ Failed to open platforms', 'error');
+  } finally {
+    setTimeout(() => {
+      if (openSelectedPlatformsBtn) {
+        openSelectedPlatformsBtn.disabled = false;
+        openSelectedPlatformsBtn.innerHTML = '<svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg> Open Selected Now';
+      }
+    }, 1000);
+  }
+}
+
+async function openInEmptyTabs() {
+  const openInEmptyTabsBtn = document.getElementById('open-in-empty-tabs-btn');
+  try {
+    if (openInEmptyTabsBtn) {
+      openInEmptyTabsBtn.disabled = true;
+      openInEmptyTabsBtn.innerHTML = '<svg class="btn-icon w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Opening...';
+    }
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'OPEN_IN_EMPTY_TABS'
+    });
+
+    if (response && response.success) {
+      if (response.message) {
+        showToast(`ℹ️ ${response.message}`, 'success');
+      } else {
+        showToast(`✅ Opened ${response.opened || 0} URLs in empty tabs`, 'success');
+      }
+    } else {
+      showToast('❌ Failed to open URLs', 'error');
+    }
+  } catch (error) {
+    spError('[Side Panel] Failed to open in empty tabs:', error);
+    showToast('❌ Failed to open URLs', 'error');
+  } finally {
+    setTimeout(() => {
+      if (openInEmptyTabsBtn) {
+        openInEmptyTabsBtn.disabled = false;
+        openInEmptyTabsBtn.innerHTML = '<svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg> Open in Empty Tabs';
+      }
+    }, 1000);
   }
 }
 

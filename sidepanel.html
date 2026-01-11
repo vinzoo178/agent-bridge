@@ -221,6 +221,52 @@
           </div>
         </div>
         
+        <!-- Auto-Open Settings Section -->
+        <div class="auto-open-section">
+          <div class="section-header">
+            <h3 class="section-title">Auto-Open Platforms</h3>
+            <p class="section-subtitle">Select platforms to automatically open when browser starts</p>
+          </div>
+          
+          <div class="auto-open-settings">
+            <label class="setting-toggle flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="auto-open-on-start" class="cursor-pointer">
+              <span>Open selected platforms on browser startup</span>
+            </label>
+            <label class="setting-toggle flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="auto-open-empty-tabs" class="cursor-pointer">
+              <span>Open in tabs with no agents</span>
+            </label>
+            <div class="auto-open-actions flex items-center gap-2">
+              <button class="btn btn-secondary btn-sm" id="open-selected-platforms-btn">
+                <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                </svg>
+                Open Selected Now
+              </button>
+              <button class="btn btn-secondary btn-sm" id="open-in-empty-tabs-btn">
+                <svg class="btn-icon w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                </svg>
+                Open in Empty Tabs
+              </button>
+            </div>
+          </div>
+
+          <!-- Supported Platforms List -->
+          <div class="supported-platforms-section">
+            <div class="section-header">
+              <h3 class="section-title">Supported Platforms</h3>
+              <p class="section-subtitle">Select which platforms to auto-open</p>
+            </div>
+            <div class="supported-platforms-list" id="supported-platforms-list">
+              <div class="empty-state">
+                <p>Loading platforms...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        
         <p class="help-text">
           <svg class="inline w-4 h-4 mr-1 align-middle" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>

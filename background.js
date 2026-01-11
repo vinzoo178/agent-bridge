@@ -19,6 +19,14 @@ const state = {
   conversationHistory: [],
   // Available agents pool - tabs that have registered but not assigned to slots
   availableAgents: [], // Array of { tabId, platform, title, registeredAt }
+  // Registered agent URLs for auto-opening (legacy - kept for backward compatibility)
+  registeredAgentUrls: [], // Array of { url, platform, title, registeredAt }
+  // Selected platform URLs to auto-open on browser startup
+  selectedPlatformUrls: [], // Array of URLs selected by user from supported platforms
+  autoOpenSettings: {
+    openOnBrowserStart: false, // Open selected platform URLs when browser starts
+    openInEmptyTabs: false // Open in tabs that currently have no agents
+  },
   config: {
     autoReplyDelay: 2000, // Delay before auto-reply (ms)
     maxTurns: 50, // Maximum conversation turns
@@ -393,8 +401,17 @@ function bgWarn(...args) {
 // BACKEND CLIENT INITIALIZATION
 // ============================================
 
+// TEMPORARY FLAG: Set to false to disable automatic opening of backend-page.html
+const AUTO_OPEN_BACKEND_PAGE = false;
+
 // Initialize backend client by injecting into extension page
 async function initBackendClient() {
+  // Check if auto-opening is disabled
+  if (!AUTO_OPEN_BACKEND_PAGE) {
+    bgLog('Auto-opening of backend-page.html is disabled');
+    return;
+  }
+
   try {
     // Create or get extension page for backend client
     const url = chrome.runtime.getURL('backend-page.html');
@@ -672,6 +689,45 @@ async function handleMessage(message, sender) {
       await autoRegisterChatTabs();
       return { success: true };
 
+    case 'GET_REGISTERED_URLS':
+      return { 
+        success: true, 
+        urls: state.registeredAgentUrls, 
+        selectedPlatforms: state.selectedPlatformUrls,
+        supportedPlatforms: getSupportedPlatformUrls(),
+        settings: state.autoOpenSettings 
+      };
+
+    case 'GET_SUPPORTED_PLATFORMS':
+      return { success: true, platforms: getSupportedPlatformUrls() };
+
+    case 'UPDATE_SELECTED_PLATFORMS':
+      state.selectedPlatformUrls = message.urls || [];
+      await chrome.storage.local.set({ selectedPlatformUrls: state.selectedPlatformUrls });
+      return { success: true, selectedPlatforms: state.selectedPlatformUrls };
+
+    case 'UPDATE_AUTO_OPEN_SETTINGS':
+      state.autoOpenSettings = { ...state.autoOpenSettings, ...message.settings };
+      await chrome.storage.local.set({ autoOpenSettings: state.autoOpenSettings });
+      return { success: true, settings: state.autoOpenSettings };
+
+    case 'REMOVE_REGISTERED_URL':
+      if (message.url) {
+        state.registeredAgentUrls = state.registeredAgentUrls.filter(u => u.url !== message.url);
+        await chrome.storage.local.set({ registeredAgentUrls: state.registeredAgentUrls });
+        return { success: true };
+      }
+      return { success: false, error: 'No URL provided' };
+
+    case 'OPEN_REGISTERED_URLS':
+      return await openRegisteredUrls(message.context || 'manual');
+
+    case 'OPEN_SELECTED_PLATFORMS':
+      return await openSelectedPlatforms(message.context || 'manual');
+
+    case 'OPEN_IN_EMPTY_TABS':
+      return await openInEmptyTabs();
+
     case 'DEBUG_STATE':
       // Debug endpoint to check current state
       const storageCheck = await chrome.storage.local.get([
@@ -940,23 +996,26 @@ async function registerToPool(tabId, platform) {
   bgLog('====== REGISTER TO POOL ======');
   bgLog('TabId:', tabId, 'Platform:', platform);
 
+  // Get tab info (title and URL)
+  let title = 'Chat Tab';
+  let url = null;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    title = tab.title || 'Chat Tab';
+    url = tab.url || null;
+  } catch (e) {
+    bgLog('Could not get tab info:', e.message);
+  }
+
   // Check if already in pool
   const existingIndex = state.availableAgents.findIndex(agent => agent.tabId === tabId);
   if (existingIndex >= 0) {
     bgLog('Tab already in pool, updating...');
     // Update existing entry
     state.availableAgents[existingIndex].platform = platform;
+    state.availableAgents[existingIndex].title = title;
     state.availableAgents[existingIndex].registeredAt = new Date().toISOString();
   } else {
-    // Get tab title
-    let title = 'Chat Tab';
-    try {
-      const tab = await chrome.tabs.get(tabId);
-      title = tab.title || 'Chat Tab';
-    } catch (e) {
-      bgLog('Could not get tab title:', e.message);
-    }
-
     // Add to pool
     state.availableAgents.push({
       tabId: tabId,
@@ -965,6 +1024,30 @@ async function registerToPool(tabId, platform) {
       registeredAt: new Date().toISOString()
     });
     bgLog('Added to pool. Total agents:', state.availableAgents.length);
+  }
+
+  // Also save URL to registered URLs list (if URL is valid and not already saved)
+  if (url && isChatPlatform(url)) {
+    const rootUrl = getRootUrlForPlatform(url);
+    if (rootUrl) {
+      const urlExists = state.registeredAgentUrls.some(u => u.url === rootUrl);
+      if (!urlExists) {
+        state.registeredAgentUrls.push({
+          url: rootUrl,
+          platform: platform,
+          title: title,
+          registeredAt: new Date().toISOString()
+        });
+        await chrome.storage.local.set({ registeredAgentUrls: state.registeredAgentUrls });
+        bgLog('Added URL to registered list:', rootUrl);
+        
+        // Broadcast update to sidepanel
+        chrome.runtime.sendMessage({
+          type: 'REGISTERED_URLS_UPDATE',
+          urls: state.registeredAgentUrls
+        }).catch(() => { });
+      }
+    }
   }
 
   // Save to storage
@@ -2010,7 +2093,10 @@ async function restoreStateFromStorage() {
       'session2_tabId',
       'session2_platform',
       'availableAgents',
-      'participants'
+      'participants',
+      'registeredAgentUrls',
+      'selectedPlatformUrls',
+      'autoOpenSettings'
     ]);
 
     if (result.conversationHistory) {
@@ -2037,6 +2123,24 @@ async function restoreStateFromStorage() {
       state.availableAgents = validAgents;
       await chrome.storage.local.set({ availableAgents: state.availableAgents });
       bgLog('Restored available agents from storage:', validAgents.length);
+    }
+
+    // Restore registered agent URLs (legacy)
+    if (result.registeredAgentUrls && Array.isArray(result.registeredAgentUrls)) {
+      state.registeredAgentUrls = result.registeredAgentUrls;
+      bgLog('Restored registered URLs from storage:', state.registeredAgentUrls.length);
+    }
+
+    // Restore selected platform URLs
+    if (result.selectedPlatformUrls && Array.isArray(result.selectedPlatformUrls)) {
+      state.selectedPlatformUrls = result.selectedPlatformUrls;
+      bgLog('Restored selected platform URLs from storage:', state.selectedPlatformUrls.length);
+    }
+
+    // Restore auto-open settings
+    if (result.autoOpenSettings) {
+      state.autoOpenSettings = { ...state.autoOpenSettings, ...result.autoOpenSettings };
+      bgLog('Restored auto-open settings:', state.autoOpenSettings);
     }
 
     // Restore participants (new system)
@@ -2163,6 +2267,22 @@ function detectPlatformFromUrl(url) {
   } catch {
     return null;
   }
+}
+
+// Get list of all supported platform URLs (from host_permissions)
+function getSupportedPlatformUrls() {
+  return [
+    { url: 'https://gemini.google.com/', name: 'Google Gemini', platform: 'gemini', icon: '✨' },
+    { url: 'https://chatgpt.com/', name: 'ChatGPT', platform: 'chatgpt', icon: '🤖' },
+    { url: 'https://chat.openai.com/', name: 'ChatGPT (OpenAI)', platform: 'chatgpt', icon: '🤖' },
+    { url: 'https://chat.deepseek.com/', name: 'DeepSeek', platform: 'deepseek', icon: '🔍' },
+    { url: 'https://duck.ai/', name: 'DuckDuckGo AI', platform: 'duckduckgo', icon: '🦆' },
+    { url: 'https://duckduckgo.com/?q=DuckDuckGo+AI+Chat&ia=chat&duckai=1', name: 'DuckDuckGo AI (Full)', platform: 'duckduckgo', icon: '🦆' },
+    { url: 'https://chat.z.ai/', name: 'Z.ai', platform: 'zai', icon: '⚡' },
+    { url: 'https://www.kimi.com/', name: 'Kimi', platform: 'kimi', icon: '🌟' },
+    { url: 'https://you.com/?chatMode=default', name: 'You.com', platform: 'youcom', icon: '💬' },
+    { url: 'https://chat.qwen.ai/', name: 'Qwen', platform: 'qwen', icon: '🔮' }
+  ];
 }
 
 // Get root URL for a platform based on current URL
@@ -2318,3 +2438,205 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 
 // Auto-register on startup
 setTimeout(autoRegisterChatTabs, 3000);
+
+// ============================================
+// AUTO-OPEN REGISTERED URLS
+// ============================================
+
+// Open selected platform URLs (for browser startup or manual trigger)
+async function openSelectedPlatforms(context = 'manual') {
+  bgLog('Opening selected platform URLs, context:', context);
+
+  if (state.selectedPlatformUrls.length === 0) {
+    bgLog('No selected platform URLs to open');
+    return { success: true, opened: 0 };
+  }
+
+  let opened = 0;
+  for (const url of state.selectedPlatformUrls) {
+    try {
+      // Check if URL is already open by checking all tabs
+      const allTabs = await chrome.tabs.query({});
+      const urlAlreadyOpen = allTabs.some(tab => {
+        if (!tab.url) return false;
+        try {
+          const tabUrl = new URL(tab.url);
+          const selectedUrl = new URL(url);
+          // Compare hostname to see if same platform
+          return tabUrl.hostname === selectedUrl.hostname && isChatPlatform(tab.url);
+        } catch {
+          return false;
+        }
+      });
+
+      if (urlAlreadyOpen) {
+        bgLog('URL already open:', url);
+        continue;
+      }
+
+      // Open the URL
+      await chrome.tabs.create({
+        url: url,
+        active: false
+      });
+      opened++;
+      bgLog('Opened URL:', url);
+    } catch (e) {
+      bgError('Failed to open URL:', url, e.message);
+    }
+  }
+
+  bgLog('Opened', opened, 'selected platform URLs');
+  return { success: true, opened: opened };
+}
+
+// Open registered URLs (for browser startup or manual trigger) - legacy function
+async function openRegisteredUrls(context = 'manual') {
+  bgLog('Opening registered URLs, context:', context);
+
+  if (state.registeredAgentUrls.length === 0) {
+    bgLog('No registered URLs to open');
+    return { success: true, opened: 0 };
+  }
+
+  let opened = 0;
+  for (const urlInfo of state.registeredAgentUrls) {
+    try {
+      // Check if URL is already open by checking all tabs
+      const allTabs = await chrome.tabs.query({});
+      const urlAlreadyOpen = allTabs.some(tab => {
+        if (!tab.url) return false;
+        try {
+          const tabUrl = new URL(tab.url);
+          const registeredUrl = new URL(urlInfo.url);
+          // Compare hostname to see if same platform
+          return tabUrl.hostname === registeredUrl.hostname && isChatPlatform(tab.url);
+        } catch {
+          return false;
+        }
+      });
+
+      if (urlAlreadyOpen) {
+        bgLog('URL already open:', urlInfo.url);
+        continue;
+      }
+
+      // Open the URL
+      await chrome.tabs.create({
+        url: urlInfo.url,
+        active: false
+      });
+      opened++;
+      bgLog('Opened URL:', urlInfo.url);
+    } catch (e) {
+      bgError('Failed to open URL:', urlInfo.url, e.message);
+    }
+  }
+
+  bgLog('Opened', opened, 'URLs');
+  return { success: true, opened: opened };
+}
+
+// Open selected platform URLs in tabs that currently have no agents
+async function openInEmptyTabs() {
+  bgLog('Opening selected platform URLs in empty tabs...');
+
+  if (state.selectedPlatformUrls.length === 0) {
+    bgLog('No selected platform URLs to open');
+    return { success: true, opened: 0, message: 'No platforms selected. Please select platforms first.' };
+  }
+
+  // Get all tabs
+  const allTabs = await chrome.tabs.query({});
+  
+  // Find tabs that are not chat platforms (empty tabs)
+  const emptyTabs = allTabs.filter(tab => {
+    if (!tab.url) return false;
+    if (tab.url.startsWith('chrome://')) return false;
+    if (tab.url.startsWith('chrome-extension://')) return false;
+    if (tab.url.startsWith('about:')) return false;
+    // Check if it's already a chat platform
+    return !isChatPlatform(tab.url);
+  });
+
+  bgLog('Found empty tabs:', emptyTabs.length);
+
+  if (emptyTabs.length === 0) {
+    bgLog('No empty tabs found');
+    return { success: true, opened: 0, message: 'No empty tabs available' };
+  }
+
+  let opened = 0;
+  const urlsToOpen = state.selectedPlatformUrls.slice(0, emptyTabs.length); // Limit to available empty tabs
+
+  for (let i = 0; i < urlsToOpen.length && i < emptyTabs.length; i++) {
+    try {
+      const url = urlsToOpen[i];
+      const emptyTab = emptyTabs[i];
+
+      // Check if URL is already open in another tab
+      const urlAlreadyOpen = allTabs.some(tab => {
+        if (!tab.url || tab.id === emptyTab.id) return false;
+        try {
+          const tabUrl = new URL(tab.url);
+          const selectedUrl = new URL(url);
+          // Compare hostname to see if same platform
+          return tabUrl.hostname === selectedUrl.hostname && isChatPlatform(tab.url);
+        } catch {
+          return false;
+        }
+      });
+
+      if (urlAlreadyOpen) {
+        bgLog('URL already open, skipping:', url);
+        continue;
+      }
+
+      // Update the empty tab with the selected platform URL
+      await chrome.tabs.update(emptyTab.id, {
+        url: url
+      });
+      opened++;
+      bgLog('Opened URL in empty tab:', url, 'tab:', emptyTab.id);
+    } catch (e) {
+      bgError('Failed to open URL in empty tab:', e.message);
+    }
+  }
+
+  bgLog('Opened', opened, 'URLs in empty tabs');
+  return { success: true, opened: opened };
+}
+
+// Listen for browser startup
+chrome.runtime.onStartup.addListener(async () => {
+  bgLog('Browser startup detected');
+  
+  // Restore state first
+  await restoreStateFromStorage();
+  
+  // Check if auto-open on startup is enabled
+  if (state.autoOpenSettings.openOnBrowserStart) {
+    bgLog('Auto-open on startup enabled, opening selected platform URLs...');
+    setTimeout(() => {
+      openSelectedPlatforms('startup');
+    }, 2000); // Wait 2 seconds for browser to fully start
+  }
+});
+
+// Also check on extension startup (not just browser startup)
+chrome.runtime.onInstalled.addListener(async () => {
+  // Restore state
+  await restoreStateFromStorage();
+  
+  // Check if we should auto-open (for cases where extension is reloaded)
+  // Only do this if there are no existing chat tabs
+  const allTabs = await chrome.tabs.query({});
+  const chatTabs = allTabs.filter(tab => tab.url && isChatPlatform(tab.url));
+  
+  if (chatTabs.length === 0 && state.autoOpenSettings.openOnBrowserStart) {
+    bgLog('No chat tabs found, auto-opening selected platform URLs...');
+    setTimeout(() => {
+      openSelectedPlatforms('install');
+    }, 2000);
+  }
+});
